@@ -15,6 +15,14 @@ import psutil
 
 if platform.system() == "Windows":
     _WIN_HIDE: dict = {"creationflags": subprocess.CREATE_NO_WINDOW}
+    # Set DPI awareness before Qt initializes to avoid "Access is denied" warning
+    # This must happen before any Qt imports
+    try:
+        import ctypes
+        # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except Exception:
+        pass  # If it fails, Qt will handle it (warning will still appear but harmless)
 else:
     _WIN_HIDE: dict = {}
 
@@ -841,6 +849,40 @@ class ConsoleRedirector:
             combined = "".join(t for t, _ in self._buffer)
             self.text_widget.append_text(combined, self.color)
             self._buffer.clear()
+
+    # ── Additional stream protocol methods for subprocess compatibility ──
+    def fileno(self):
+        """Return file descriptor of original stream (for subprocess/MCP compatibility)."""
+        if self.original and hasattr(self.original, 'fileno'):
+            return self.original.fileno()
+        raise AttributeError("fileno not available")
+
+    def isatty(self):
+        """Return whether original stream is a TTY."""
+        if self.original and hasattr(self.original, 'isatty'):
+            return self.original.isatty()
+        return False
+
+    @property
+    def encoding(self):
+        """Return encoding of original stream."""
+        if self.original and hasattr(self.original, 'encoding'):
+            return self.original.encoding
+        return 'utf-8'
+
+    @property
+    def errors(self):
+        """Return error handling mode of original stream."""
+        if self.original and hasattr(self.original, 'errors'):
+            return self.original.errors
+        return 'replace'
+
+    @property
+    def closed(self):
+        """Return whether stream is closed."""
+        if self.original and hasattr(self.original, 'closed'):
+            return self.original.closed
+        return False
 
 
 class ConsoleWidget(QWidget):
@@ -3435,8 +3477,9 @@ class MainWindow(QMainWindow):
         self._right_split.setCollapsible(0, False)  # Activity Log cannot collapse
         self._right_split.setCollapsible(1, True)   # Console Output can collapse
 
-        # Start with Console collapsed (height = 0)
-        self._right_split.setSizes([600, 0])  # 600 is estimate, Console at 0
+        # Start with Console expanded (30% of space as per spec)
+        # Original spec called for collapsed start, but changed for visibility
+        self._right_split.setSizes([420, 180])  # ~70% Activity Log, ~30% Console Output
 
         # Add splitter to main layout with stretch
         lay.addWidget(self._right_split, stretch=1)

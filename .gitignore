@@ -12,6 +12,10 @@ __pycache__/
 venv/
 env/
 
+# ── Node.js ──────────────────────────────────────────────────────────────
+node_modules/
+package-lock.json
+
 # ── Runtime state ────────────────────────────────────────────────────────
 memory/*.json
 *.log

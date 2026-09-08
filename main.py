@@ -968,10 +968,18 @@ class JarvisLive:
             parts.append(mem_str)
         parts.append(sys_prompt)
 
-        # Get MCP tools asynchronously (must run in sync context, so use asyncio.run)
+        # Get MCP tools - use cached list from initialization
+        # We can't call async methods from sync context (asyncio.run fails in running loop)
         _mcp_tools = []
         try:
-            _mcp_tools = asyncio.run(self._mcp_manager.get_all_tools())
+            # Get tools synchronously from already-connected servers
+            for server_id, conn in self._mcp_manager.servers.items():
+                if conn.is_connected():
+                    for tool in conn.get_tools():
+                        gemini_tool = self._mcp_manager._convert_tool_to_gemini(server_id, tool)
+                        _mcp_tools.append(gemini_tool)
+            if _mcp_tools:
+                print(f"[MCP] Loaded {len(_mcp_tools)} tools for Gemini")
         except Exception as e:
             print(f"[MCP] Failed to get tools: {e}")
 
@@ -1849,6 +1857,7 @@ class JarvisLive:
         audio_devices.prefetch()
 
         # Initialize MCP servers (connect to external tool providers)
+        # Stream restoration is now handled inside mcp_manager.py
         await self._mcp_manager.initialize()
 
         # Start dashboard (optional — needs: pip install fastapi "uvicorn[standard]" cryptography)

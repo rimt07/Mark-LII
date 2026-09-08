@@ -43,6 +43,25 @@ class MCPServerConnection:
 
             self.logger(f"[MCP] Connecting to server '{self.server_id}'...")
 
+            # CRITICAL FIX: Get REAL system streams before subprocess launch
+            # Even if sys.stdout/stderr were temporarily restored, subprocess might
+            # have already inherited redirected descriptors. We must get the
+            # ORIGINAL file descriptors before any redirection happened.
+            import os
+            original_stdout = None
+            original_stderr = None
+
+            # Try to get original streams from ConsoleRedirector if present
+            if hasattr(sys.stdout, 'original') and sys.stdout.original:
+                original_stdout = sys.stdout.original
+            else:
+                original_stdout = sys.stdout
+
+            if hasattr(sys.stderr, 'original') and sys.stderr.original:
+                original_stderr = sys.stderr.original
+            else:
+                original_stderr = sys.stderr
+
             # Build server parameters from config
             server_params = StdioServerParameters(
                 command=self.config["command"],
@@ -50,18 +69,35 @@ class MCPServerConnection:
                 env=self.config.get("env", None)
             )
 
-            # Create stdio client context (subprocess + MCP client)
-            # This launches the server process
-            self._context = stdio_client(server_params)
+            # Temporarily set sys streams to originals during subprocess creation
+            saved_stdout = sys.stdout
+            saved_stderr = sys.stderr
+            sys.stdout = original_stdout
+            sys.stderr = original_stderr
 
-            # Enter context manager to get read/write streams
-            read_stream, write_stream = await self._context.__aenter__()
+            try:
+                # Create stdio client context (subprocess + MCP client)
+                self._context = stdio_client(server_params)
+
+                # Enter context manager to get read/write streams
+                # This launches the subprocess which NOW inherits correct stdout/stderr
+                read_stream, write_stream = await asyncio.wait_for(
+                    self._context.__aenter__(),
+                    timeout=10.0  # 10 second timeout for subprocess launch
+                )
+            finally:
+                # Restore redirected streams immediately
+                sys.stdout = saved_stdout
+                sys.stderr = saved_stderr
 
             # Create MCP client session with the streams
             self._client = ClientSession(read_stream, write_stream)
 
-            # Initialize the session (handshake with server)
-            await self._client.__aenter__()
+            # Initialize the session (handshake with server) with timeout
+            await asyncio.wait_for(
+                self._client.__aenter__(),
+                timeout=5.0  # 5 second timeout for handshake
+            )
 
             # Discover available tools
             await self._discover_tools()
@@ -71,8 +107,13 @@ class MCPServerConnection:
             self.logger(f"[MCP] Connected to '{self.server_id}' - {len(self._tools)} tools available")
             return True
 
+        except asyncio.TimeoutError:
+            self.logger(f"[MCP] Connection to '{self.server_id}' timed out")
+            self._connected = False
+            return False
         except Exception as e:
             self.logger(f"[MCP] Failed to connect to '{self.server_id}': {e}")
+            self.logger(f"[MCP] Exception type: {type(e).__name__}")
             traceback.print_exc()
             self._connected = False
             return False
@@ -80,14 +121,26 @@ class MCPServerConnection:
     async def _discover_tools(self):
         """Discover tools from connected server via list_tools()"""
         if not self._client:
+            self.logger(f"[MCP] No client available for tool discovery")
             return
 
         try:
-            result = await self._client.list_tools()
+            self.logger(f"[MCP] Requesting tools from '{self.server_id}'...")
+            # Add timeout to prevent hanging indefinitely
+            result = await asyncio.wait_for(
+                self._client.list_tools(),
+                timeout=5.0  # 5 second timeout
+            )
             self._tools = result.tools if result else []
             self.logger(f"[MCP] Discovered {len(self._tools)} tools from '{self.server_id}'")
+        except asyncio.TimeoutError:
+            self.logger(f"[MCP] Tool discovery timed out for '{self.server_id}' - server not responding")
+            self._tools = []
         except Exception as e:
             self.logger(f"[MCP] Tool discovery failed for '{self.server_id}': {e}")
+            self.logger(f"[MCP] Exception type: {type(e).__name__}")
+            import traceback
+            traceback.print_exc()
             self._tools = []
 
     async def disconnect(self):

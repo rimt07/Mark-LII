@@ -1,16 +1,16 @@
 {
-  "_comment": "MCP Server Configuration - Edit 'command' args[0] to point to your PyMCP-FS installation. Clone from: https://github.com/hypercat/PyMCP-FS",
+  "_comment": "MCP Server Configuration - Official Anthropic MCP filesystem server",
   "servers": {
     "fs": {
-      "name": "PyMCP-FS",
-      "description": "Local filesystem access",
+      "name": "MCP Filesystem Server",
+      "description": "Official Anthropic filesystem server for local file access",
       "enabled": true,
       "transport": "stdio",
-      "command": "python",
+      "command": "npx",
       "args": [
-        "D:/path/to/PyMCP-FS/main.py",
-        "-d",
-        "D:/Programacion/ia/Mark-LII"
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "C:/dev/"
       ],
       "restart_on_failure": true,
       "health_check_interval": 60
