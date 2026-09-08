@@ -50,9 +50,34 @@ ollama pull gemma2:2b     # 2B, very fast
 # Install Ollama backend dependencies
 pip install ollama openai-whisper edge-tts
 
+# For fully offline TTS (recommended):
+pip install kokoro-onnx soundfile
+
 # For Windows: you may need ffmpeg for Whisper
 # Download from https://ffmpeg.org/download.html or via chocolatey:
 choco install ffmpeg
+```
+
+### 4. Download Kokoro TTS Models (Optional - For Offline TTS)
+
+If using Kokoro TTS for fully offline operation:
+
+```bash
+# Create models directory
+mkdir models
+
+# Download Kokoro ONNX model (~180MB)
+curl -L -o models/kokoro-v1.0.onnx https://github.com/nazdridoy/kokoro-tts/releases/download/v1.0.0/kokoro-v1.0.onnx
+
+# Download voices file (~45MB)
+curl -L -o models/voices-v1.0.bin https://github.com/nazdridoy/kokoro-tts/releases/download/v1.0.0/voices-v1.0.bin
+```
+
+**Windows PowerShell:**
+```powershell
+New-Item -ItemType Directory -Force models
+Invoke-WebRequest -Uri "https://github.com/nazdridoy/kokoro-tts/releases/download/v1.0.0/kokoro-v1.0.onnx" -OutFile "models/kokoro-v1.0.onnx"
+Invoke-WebRequest -Uri "https://github.com/nazdridoy/kokoro-tts/releases/download/v1.0.0/voices-v1.0.bin" -OutFile "models/voices-v1.0.bin"
 ```
 
 ## Configuration
@@ -100,9 +125,18 @@ Edit `config/llm_config.json`:
 - `language`: `"auto"` for auto-detection or ISO code (`"en"`, `"es"`, `"fr"`, etc.)
 
 **TTS (Text-to-Speech):**
-- `engine`: `"edge"` (Microsoft Edge TTS, requires internet) or `"piper"` (fully offline, WIP)
-- `voice`: Voice name (Edge TTS voices: see [available voices](https://speech.microsoft.com/portal/voicegallery))
+- `engine`: TTS engine selection
+  - **`"kokoro"`**: Fully offline, high-quality ONNX-based TTS (recommended for privacy)
+  - **`"edge"`**: Microsoft Edge TTS (requires internet, good quality)
+  - **`"none"`**: Text-only mode (no speech synthesis)
+- `voice`: Voice selection (depends on engine)
+  - **Kokoro voices**: `af_sarah`, `am_adam`, `bf_emma`, `bm_george`, etc.
+  - **Edge TTS voices**: See [available voices](https://speech.microsoft.com/portal/voicegallery)
+  - **Voice blending** (Kokoro only): `"af_sarah:60,am_adam:40"` for 60-40 mix
 - `speed`: Speech rate (0.5-2.0, default: 1.0)
+- `lang`: Language code for Kokoro (`"en-us"`, `"en-gb"`, `"fr-fr"`, `"ja"`, `"cmn"`, etc.)
+- `model_path`: Custom path to kokoro-v1.0.onnx (optional, defaults to `./models/kokoro-v1.0.onnx`)
+- `voices_path`: Custom path to voices-v1.0.bin (optional, defaults to `./models/voices-v1.0.bin`)
 
 ## Usage
 
@@ -140,9 +174,87 @@ SYS: Ollama backend ready.
 SYS: Microphone active.
 ```
 
+## Kokoro TTS: Fully Offline Speech Synthesis
+
+Kokoro TTS provides high-quality, fully offline text-to-speech synthesis using ONNX models. It's the recommended TTS engine for privacy-focused deployments.
+
+### Features
+
+- **100% Offline**: No internet required after model download
+- **High Quality**: Natural-sounding voices with emotion
+- **Fast**: ONNX-optimized inference (~200ms latency)
+- **Voice Blending**: Mix two voices for unique sound
+- **Multi-Language**: English (US/GB), French, Italian, Japanese, Mandarin
+
+### Available Voices
+
+**American English:**
+- `af_sarah`: Female, clear, professional
+- `af_nicole`: Female, warm, friendly
+- `am_adam`: Male, deep, authoritative
+- `am_michael`: Male, neutral, conversational
+
+**British English:**
+- `bf_emma`: Female, British accent
+- `bm_george`: Male, British accent
+
+**Other Languages:**
+- `fr_*`: French voices
+- `it_*`: Italian voices
+- `ja_*`: Japanese voices
+- `cmn_*`: Mandarin Chinese voices
+
+### Voice Blending Example
+
+```json
+{
+  "tts": {
+    "engine": "kokoro",
+    "voice": "af_sarah:70,am_adam:30",
+    "speed": 1.0
+  }
+}
+```
+
+This creates a 70% feminine, 30% masculine voice blend for unique character.
+
+### Configuration Examples
+
+**Fully offline setup (Kokoro):**
+```json
+{
+  "backend": "ollama",
+  "ollama": {
+    "base_url": "http://localhost:11434",
+    "model": "llama3.2:latest",
+    "stt": {
+      "engine": "whisper",
+      "model": "base"
+    },
+    "tts": {
+      "engine": "kokoro",
+      "voice": "af_sarah",
+      "speed": 1.0,
+      "lang": "en-us"
+    }
+  }
+}
+```
+
+**Edge TTS setup (requires internet):**
+```json
+{
+  "tts": {
+    "engine": "edge",
+    "voice": "en-US-AriaNeural",
+    "speed": 1.0
+  }
+}
+```
+
 ## Performance Tuning
 
-### Model Selection
+### LLM Model Selection
 
 | Model | Size | Speed | Quality | Use Case |
 |-------|------|-------|---------|----------|
@@ -188,7 +300,32 @@ ollama pull llama3.2
 - Check CPU usage during transcription
 - Consider upgrading to `base` or `small` for better accuracy
 
-### No Audio Output
+### No Audio Output (Kokoro TTS)
+
+1. **Check model files exist:**
+   ```bash
+   ls models/
+   # Should show kokoro-v1.0.onnx and voices-v1.0.bin
+   ```
+
+2. **Verify kokoro-onnx installation:**
+   ```bash
+   pip list | grep kokoro
+   # Should show kokoro-onnx
+   ```
+
+3. **Test Kokoro directly:**
+   ```python
+   from kokoro_onnx import Kokoro
+   kokoro = Kokoro("models/kokoro-v1.0.onnx", "models/voices-v1.0.bin")
+   samples, sr = kokoro.create("Hello world", voice="af_sarah", lang="en-us")
+   print(f"Generated {len(samples)} samples at {sr}Hz")
+   ```
+
+4. **Fallback to Edge TTS:**
+   Change `"engine": "edge"` in config if Kokoro fails
+
+### No Audio Output (Edge TTS)
 
 - Edge TTS requires internet connection
 - Check speaker/output device in MARK LII settings
@@ -224,12 +361,25 @@ Current Ollama backend limitations:
 1. **No Vision Support**: Camera/screen capture not yet integrated
 2. **No Streaming Audio**: Responses synthesized after completion (not real-time like Gemini)
 3. **Tool Execution**: Full tool support, but slower than Gemini
-4. **Internet Required**: Edge TTS requires connection (Piper TTS is WIP)
-5. **Context Window**: Limited by model (4K-32K tokens vs Gemini's 1M+)
+4. **Context Window**: Limited by model (4K-32K tokens vs Gemini's 1M+)
+
+## Fully Offline Operation
+
+With Kokoro TTS, MARK LII can run **100% offline**:
+
+✅ **Ollama**: Local LLM (no API calls)  
+✅ **Whisper**: Local STT (no cloud transcription)  
+✅ **Kokoro**: Local TTS (no internet synthesis)
+
+This provides:
+- **Privacy**: All data stays on your machine
+- **Reliability**: No dependency on cloud services
+- **Speed**: No network latency for STT/TTS
+- **Cost**: No API usage fees
 
 ## Future Enhancements
 
-- [ ] Piper TTS integration (fully offline)
+- [x] Kokoro TTS integration (fully offline) ✅ **DONE**
 - [ ] Vision model integration (LLaVA, BakLLaVA)
 - [ ] Streaming audio generation
 - [ ] Context window management
@@ -241,4 +391,6 @@ Current Ollama backend limitations:
 - [Ollama Documentation](https://github.com/ollama/ollama/tree/main/docs)
 - [Ollama Model Library](https://ollama.ai/library)
 - [Whisper Documentation](https://github.com/openai/whisper)
+- [Kokoro TTS GitHub](https://github.com/nazdridoy/kokoro-tts)
+- [Kokoro ONNX PyPI](https://pypi.org/project/kokoro-onnx/)
 - [Edge TTS Voices](https://speech.microsoft.com/portal/voicegallery)

@@ -20,6 +20,11 @@ package-lock.json
 memory/*.json
 *.log
 
+# ── Models ───────────────────────────────────────────────────────────────
+models/*.onnx
+models/*.bin
+!models/README.md
+
 # ── Editor / OS ──────────────────────────────────────────────────────────
 .vscode/
 .idea/

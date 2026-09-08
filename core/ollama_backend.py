@@ -103,6 +103,28 @@ class OllamaBackend:
             tts_config = self.config.get("tts", {})
             tts_engine = tts_config.get("engine", "edge")
 
+            if tts_engine == "kokoro":
+                try:
+                    from core.kokoro_tts_wrapper import KokoroTTS
+                    self.tts_engine = "kokoro"
+                    self.tts_kokoro = KokoroTTS(
+                        voice=tts_config.get("voice", "af_sarah"),
+                        speed=tts_config.get("speed", 1.0),
+                        lang=tts_config.get("lang", "en-us"),
+                        model_path=tts_config.get("model_path"),
+                        voices_path=tts_config.get("voices_path"),
+                        logger=self.ui_logger
+                    )
+                    if self.tts_kokoro.initialize():
+                        self.ui_logger(f"[Ollama] Using Kokoro TTS (offline) with voice: {tts_config.get('voice', 'af_sarah')}")
+                    else:
+                        self.ui_logger("[Ollama] Kokoro TTS initialization failed, falling back to Edge TTS")
+                        tts_engine = "edge"  # Fallback to Edge TTS
+                except ImportError:
+                    self.ui_logger("[Ollama] WARNING: 'kokoro-onnx' not installed. Run: pip install kokoro-onnx")
+                    self.ui_logger("[Ollama] Falling back to Edge TTS")
+                    tts_engine = "edge"
+
             if tts_engine == "edge":
                 try:
                     import edge_tts
@@ -256,7 +278,25 @@ class OllamaBackend:
             return
 
         try:
-            if self.tts_engine == "edge":
+            if self.tts_engine == "kokoro":
+                # Generate audio with Kokoro TTS (fully offline)
+                audio_path = await self.tts_kokoro.synthesize(text)
+
+                if audio_path:
+                    # Play audio (integrate with existing audio player)
+                    # For now, just callback with text
+                    self.speak_callback(text)
+
+                    # Clean up temp file
+                    try:
+                        os.unlink(audio_path)
+                    except Exception:
+                        pass
+                else:
+                    # Synthesis failed, fallback to text
+                    self.speak_callback(text)
+
+            elif self.tts_engine == "edge":
                 import edge_tts
 
                 # Generate audio with Edge TTS

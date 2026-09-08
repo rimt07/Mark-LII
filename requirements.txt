@@ -31,3 +31,5 @@ mcp>=1.0.0
 ollama
 openai-whisper
 edge-tts
+kokoro-onnx
+soundfile

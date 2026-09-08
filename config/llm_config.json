@@ -17,9 +17,15 @@
       "language": "auto"
     },
     "tts": {
-      "engine": "piper",
-      "voice": "en_US-lessac-medium",
-      "speed": 1.0
+      "_comment": "TTS Engine Options: 'kokoro' (fully offline, best quality), 'edge' (requires internet), or 'none'",
+      "engine": "kokoro",
+      "voice": "af_sarah",
+      "speed": 1.0,
+      "lang": "en-us",
+      "model_path": null,
+      "voices_path": null,
+      "_voice_options": "Single voice: af_sarah, am_adam, bf_emma, bm_george, etc. Blended: 'af_sarah:60,am_adam:40' for 60-40 mix",
+      "_edge_voice_fallback": "en-US-AriaNeural"
     }
   }
 }
