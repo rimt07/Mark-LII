@@ -1,0 +1,25 @@
+{
+  "_comment": "LLM Backend Configuration - Choose between Gemini Live or Ollama",
+  "backend": "gemini",
+  "gemini": {
+    "model": "models/gemini-2.5-flash-native-audio-preview-12-2025",
+    "api_version": "v1alpha"
+  },
+  "ollama": {
+    "enabled": false,
+    "base_url": "http://localhost:11434",
+    "model": "llama3.2:latest",
+    "temperature": 0.7,
+    "stream": true,
+    "stt": {
+      "engine": "whisper",
+      "model": "base",
+      "language": "auto"
+    },
+    "tts": {
+      "engine": "piper",
+      "voice": "en_US-lessac-medium",
+      "speed": 1.0
+    }
+  }
+}

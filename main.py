@@ -92,6 +92,7 @@ def get_base_dir():
 
 BASE_DIR        = get_base_dir()
 API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
+LLM_CONFIG_PATH = BASE_DIR / "config" / "llm_config.json"
 PROMPT_PATH     = BASE_DIR / "core" / "prompt.txt"
 LIVE_MODEL          = "models/gemini-2.5-flash-native-audio-preview-12-2025"
 CHANNELS            = 1
@@ -124,6 +125,19 @@ def _pcm_level(samples) -> float:
 def _get_api_key() -> str:
     with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
         return json.load(f)["gemini_api_key"]
+
+
+def _load_llm_config() -> dict:
+    """Load LLM backend configuration (gemini or ollama)"""
+    try:
+        with open(LLM_CONFIG_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        # Default to Gemini if config doesn't exist
+        return {"backend": "gemini"}
+    except Exception as e:
+        print(f"[Config] Error loading LLM config: {e}")
+        return {"backend": "gemini"}
 
 
 def _load_system_prompt() -> str:
@@ -722,7 +736,15 @@ class JarvisLive:
     def __init__(self, ui: JarvisUI):
         self.ui             = ui
         self._asst_name     = "JARVIS"   # updated each session from config
-        self.session              = None
+
+        # Load backend configuration
+        self._llm_config    = _load_llm_config()
+        self._backend_type  = self._llm_config.get("backend", "gemini")
+
+        # Backend instances (only one will be active)
+        self.session              = None  # Gemini Live session
+        self._ollama_backend      = None  # Ollama backend instance
+
         self.audio_in_queue       = None
         self.out_queue            = None
         self._loop                = None
@@ -870,15 +892,23 @@ class JarvisLive:
         return url, key, f"{url}/auto-login?key={key}", manual
 
     def _on_text_command(self, text: str):
-        if not self._loop or not self.session:
+        if not self._loop:
             return
-        asyncio.run_coroutine_threadsafe(
-            self.session.send_client_content(
-                turns={"parts": [{"text": text}]},
-                turn_complete=True
-            ),
-            self._loop
-        )
+
+        # Route to appropriate backend
+        if self._backend_type == "ollama" and self._ollama_backend:
+            asyncio.run_coroutine_threadsafe(
+                self._ollama_backend.send_text(text),
+                self._loop
+            )
+        elif self.session:
+            asyncio.run_coroutine_threadsafe(
+                self.session.send_client_content(
+                    turns={"parts": [{"text": text}]},
+                    turn_complete=True
+                ),
+                self._loop
+            )
 
     def set_speaking(self, value: bool):
         with self._speaking_lock:
@@ -1830,6 +1860,58 @@ class JarvisLive:
                 print(f"[Dashboard] Command error: {e}")
                 await asyncio.sleep(0.5)
 
+    # ── Ollama mode ─────────────────────────────────────────────────────────
+
+    async def _run_ollama_mode(self) -> None:
+        """
+        Ollama backend loop: captures audio from mic, processes through Ollama backend,
+        handles text commands, and manages tool execution.
+        """
+        # Start audio capture from microphone
+        input_device = get_input_device()
+
+        def _audio_callback(indata, frames, time_info, status):
+            """Callback from sounddevice capturing mic audio"""
+            if status:
+                print(f"[Audio] {status}")
+
+            # Send audio to Ollama backend for processing
+            if not self.ui.muted and self._ollama_backend:
+                audio_bytes = indata.tobytes()
+                # Schedule coroutine on event loop
+                asyncio.run_coroutine_threadsafe(
+                    self._ollama_backend.process_audio_chunk(audio_bytes),
+                    self._loop
+                )
+
+        # Open audio input stream
+        try:
+            stream = sd.InputStream(
+                samplerate=SEND_SAMPLE_RATE,
+                channels=CHANNELS,
+                dtype=np.int16,
+                blocksize=CHUNK_SIZE,
+                callback=_audio_callback,
+                device=input_device
+            )
+            stream.start()
+            self.ui.write_log("SYS: Microphone active.")
+        except Exception as e:
+            self.ui.write_log(f"ERROR: Could not open audio input: {e}")
+            return
+
+        # Keep running until interrupted
+        try:
+            while True:
+                await asyncio.sleep(1)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            stream.stop()
+            stream.close()
+            if self._ollama_backend:
+                await self._ollama_backend.stop_session()
+
     # ── main loop ───────────────────────────────────────────────────────────
 
     async def run(self):
@@ -1860,6 +1942,44 @@ class JarvisLive:
         # Stream restoration is now handled inside mcp_manager.py
         await self._mcp_manager.initialize()
 
+        # Initialize backend based on configuration
+        if self._backend_type == "ollama":
+            print(f"[JARVIS] Using Ollama backend")
+            self.ui.write_log("SYS: Initializing Ollama backend...")
+            from core.ollama_backend import OllamaBackend
+
+            ollama_config = self._llm_config.get("ollama", {})
+            self._ollama_backend = OllamaBackend(
+                config=ollama_config,
+                ui_logger=self.ui.write_log,
+                speak_callback=lambda text: self.ui.write_log(f"JARVIS: {text}")
+            )
+
+            # Build tools for Ollama
+            system_prompt = _load_system_prompt()
+            memory = load_memory()
+            memory_str = format_memory_for_prompt(memory)
+            full_prompt = f"{system_prompt}\n\n{memory_str}"
+            tools = self._build_tools()  # Reuse existing tool definitions
+
+            success = await self._ollama_backend.initialize(
+                system_prompt=full_prompt,
+                tools=tools,
+                tool_executor=self._execute_tool
+            )
+
+            if not success:
+                self.ui.write_log("ERROR: Ollama backend initialization failed. Check console.")
+                return
+
+            await self._ollama_backend.start_session()
+            self.ui.write_log("SYS: Ollama backend ready.")
+            self.ui.set_state("LISTENING")
+
+            # Ollama mode: simplified loop (no Gemini session management)
+            await self._run_ollama_mode()
+            return
+
         # Start dashboard (optional — needs: pip install fastapi "uvicorn[standard]" cryptography)
         try:
             from dashboard.server import DashboardServer
@@ -1872,6 +1992,8 @@ class JarvisLive:
             print(f"[Dashboard] Disabled: {e}")
             self._dashboard = None
 
+        # Gemini Live mode
+        print(f"[JARVIS] Using Gemini Live backend")
         while True:
             try:
                 print("[JARVIS] Connecting...")

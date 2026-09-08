@@ -4,10 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**MARK LII** is a cross-platform voice AI assistant built on the Gemini Live API. It's a JARVIS-style personal assistant with real-time voice interaction, visual awareness, system control, and a plugin architecture. The project runs on Windows, macOS, and Linux.
+**MARK LII** is a cross-platform voice AI assistant with dual backend support: **Gemini Live API** (cloud) or **Ollama** (local). It's a JARVIS-style personal assistant with real-time voice interaction, visual awareness, system control, and a plugin architecture. The project runs on Windows, macOS, and Linux.
+
+### Backends
+
+- **Gemini Live API** (default): Cloud-based, native audio streaming, vision support, unlimited context
+- **Ollama** (local): Privacy-first, runs entirely offline with Whisper STT + local LLM + Edge TTS
+  - See [docs/OLLAMA_SETUP.md](docs/OLLAMA_SETUP.md) for installation and configuration
 
 Core architecture:
-- **main.py**: Core event loop handling Gemini Live session, bidirectional audio streaming, tool dispatch, and plugin orchestration
+- **main.py**: Core event loop with backend detection (Gemini or Ollama), bidirectional audio streaming, tool dispatch, and plugin orchestration
+- **core/ollama_backend.py**: Local LLM backend with Whisper STT, Ollama inference, and Edge TTS
 - **ui.py**: PyQt6-based HUD with reactive waveform, boot animation, activity log, plugin manager, and camera feed
 - **Plugin system**: Drop-in `.py` files in `plugins/` that get auto-discovered at startup (copy `plugins/_template.py` to start)
 - **Memory system**: Persistent user preferences, identity, project context stored in `memory/long_term.json` with unlimited store and on-demand recall
