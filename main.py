@@ -80,6 +80,7 @@ from memory.config_manager     import (
     get_brief_enabled, get_voice, get_input_device, get_output_device,
 )
 from core.plugin_loader        import discover_plugins
+from core.mcp_manager          import MCPManager
 from core                      import undo as undo_stack
 from core                      import confirm as confirm_gate
 from core                      import audio_devices
@@ -772,6 +773,12 @@ class JarvisLive:
             core_tool_names=_core_names,
             logger=lambda msg: (print(f"[Plugins] {msg}"), self.ui.write_log(f"SYS: {msg}")),
         )
+        # Initialize MCP Manager for external server integration
+        self._mcp_manager = MCPManager(
+            config_path=BASE_DIR / "config" / "mcp_servers.json",
+            logger=lambda msg: (print(msg), self.ui.write_log(f"SYS: {msg}")),
+            status_callback=self.ui.update_mcp_status
+        )
         self.ui.get_plugins = self._plugin_registry.list_for_ui
         self.ui.request_say = self.plugin_say   # plugins: mid-task speech channel
 
@@ -961,12 +968,19 @@ class JarvisLive:
             parts.append(mem_str)
         parts.append(sys_prompt)
 
+        # Get MCP tools asynchronously (must run in sync context, so use asyncio.run)
+        _mcp_tools = []
+        try:
+            _mcp_tools = asyncio.run(self._mcp_manager.get_all_tools())
+        except Exception as e:
+            print(f"[MCP] Failed to get tools: {e}")
+
         cfg = dict(
             response_modalities=["AUDIO"],
             output_audio_transcription={},
             input_audio_transcription={},
             system_instruction="\n".join(parts),
-            tools=[{"function_declarations": TOOL_DECLARATIONS + self._plugin_registry.get_tool_declarations()}],
+            tools=[{"function_declarations": TOOL_DECLARATIONS + self._plugin_registry.get_tool_declarations() + _mcp_tools}],
             # Hand back the handle captured from the last session_resumption
             # update. `handle=None` is exactly the old behaviour (ask for
             # handles, start fresh), so the first connect of a run is unchanged.
@@ -1173,13 +1187,24 @@ class JarvisLive:
                             )
                         except Exception:
                             pass
+                    # Shutdown MCP servers cleanly
+                    await self._mcp_manager.shutdown()
                     await asyncio.sleep(1.5)
                     import os as _os
                     _os._exit(0)
                 asyncio.create_task(_do_shutdown())
 
             else:
-                if self._plugin_registry.has(name):
+                # Check if it's an MCP tool (namespace pattern: {server_id}_{tool_name})
+                _mcp_prefixes = self._mcp_manager.get_server_prefixes()
+                if any(name.startswith(prefix) for prefix in _mcp_prefixes):
+                    # Execute MCP tool via manager (wrapped in executor with asyncio.run)
+                    r = await loop.run_in_executor(
+                        None,
+                        lambda: asyncio.run(self._mcp_manager.execute_tool(name, args))
+                    )
+                    result = r or "Done."
+                elif self._plugin_registry.has(name):
                     r = await loop.run_in_executor(
                         None,
                         lambda: self._plugin_registry.run(name, args, player=self.ui, session_memory=None)
@@ -1822,6 +1847,9 @@ class JarvisLive:
         # Enumerate audio devices off-thread. The settings drawer must never pay
         # for host-API enumeration on the Qt thread.
         audio_devices.prefetch()
+
+        # Initialize MCP servers (connect to external tool providers)
+        await self._mcp_manager.initialize()
 
         # Start dashboard (optional — needs: pip install fastapi "uvicorn[standard]" cryptography)
         try:

@@ -797,6 +797,171 @@ class LogWidget(QTextEdit):
             self.ensureCursorVisible()
             QTimer.singleShot(20, self._next)
 
+
+class ConsoleRedirector:
+    """
+    Stream redirector that captures stdout/stderr and forwards to ConsoleWidget.
+
+    Implements Python stream protocol (write/flush) and uses buffering for performance.
+    Buffers messages for 100ms or until 50 messages accumulate, then flushes to UI.
+    Also writes to original stream (tee pattern) so terminal output continues working.
+
+    Thread-safe: can be called from any thread, uses Qt signals for UI updates.
+    """
+    def __init__(self, text_widget, color, original_stream):
+        self.text_widget = text_widget
+        self.color = color
+        self.original = original_stream
+        self._buffer = []
+        self._timer = QTimer()
+        self._timer.timeout.connect(self._flush_buffer)
+        self._timer.start(100)  # Flush every 100ms
+
+    def write(self, text):
+        if text and text.strip():
+            self._buffer.append((text, self.color))
+            if len(self._buffer) > 50:  # Emergency flush if buffer fills
+                self._flush_buffer()
+        if self.original:
+            try:
+                self.original.write(text)
+                self.original.flush()
+            except Exception:
+                pass  # Terminal might be closed/unavailable
+
+    def flush(self):
+        if self.original:
+            try:
+                self.original.flush()
+            except Exception:
+                pass
+
+    def _flush_buffer(self):
+        if self._buffer:
+            combined = "".join(t for t, _ in self._buffer)
+            self.text_widget.append_text(combined, self.color)
+            self._buffer.clear()
+
+
+class ConsoleWidget(QWidget):
+    """
+    Console output panel for displaying raw stdout/stderr.
+
+    Shows Python print() statements, tracebacks, and library warnings with
+    thread-safe updates via Qt signals. Automatically trims to 1000 lines
+    to prevent memory bloat during long sessions.
+    """
+    _sig = pyqtSignal(str, object)  # (text, color)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(6, 4, 6, 4)
+        lay.setSpacing(4)
+
+        # Header with Clear button
+        hdr = QHBoxLayout()
+
+        lbl = QLabel("▾ CONSOLE OUTPUT")
+        lbl.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+        lbl.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
+        hdr.addWidget(lbl)
+        hdr.addStretch()
+
+        clear_btn = QPushButton("Clear")
+        clear_btn.setFixedHeight(16)
+        clear_btn.setFont(QFont("Courier New", 6))
+        clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        clear_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                color: {C.TEXT_DIM};
+                border: 1px solid {C.BORDER};
+                border-radius: 2px;
+                padding: 0 4px;
+            }}
+            QPushButton:hover {{
+                color: {C.TEXT};
+                border-color: {C.BORDER_B};
+            }}
+        """)
+        clear_btn.clicked.connect(self._clear)
+        hdr.addWidget(clear_btn)
+
+        lay.addLayout(hdr)
+
+        # Text display (raw console output)
+        self._display = QTextEdit()
+        self._display.setReadOnly(True)
+        self._display.setFont(QFont("Courier New", 7))
+        self._display.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        self._display.setStyleSheet(f"""
+            QTextEdit {{
+                background: {C.BG};
+                color: {C.TEXT};
+                border: 1px solid {C.BORDER};
+                border-radius: 3px;
+                padding: 4px;
+                selection-background-color: {C.PRI_GHO};
+            }}
+            QScrollBar:vertical {{
+                background: {C.BG};
+                width: 6px;
+                border: none;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {C.BORDER_B};
+                border-radius: 3px;
+                min-height: 12px;
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0; border: none;
+            }}
+        """)
+        lay.addWidget(self._display)
+
+        # Connect signal for thread-safe updates
+        self._sig.connect(self._append)
+
+        # Limit of 1000 lines to prevent unbounded memory growth
+        self._max_lines = 1000
+
+    def append_text(self, text: str, color=None):
+        """Thread-safe: add text to console from any thread."""
+        self._sig.emit(text, color)
+
+    def _append(self, text: str, color):
+        """Slot running in main thread - actually updates the QTextEdit."""
+        cursor = self._display.textCursor()
+        cursor.movePosition(cursor.MoveOperation.End)
+
+        if color:
+            fmt = cursor.charFormat()
+            fmt.setForeground(QBrush(color))
+            cursor.insertText(text, fmt)
+        else:
+            cursor.insertText(text)
+
+        self._display.setTextCursor(cursor)
+        self._display.ensureCursorVisible()
+
+        # Auto-trim: keep max 1000 lines to prevent memory bloat
+        doc = self._display.document()
+        if doc.lineCount() > self._max_lines:
+            cursor.movePosition(cursor.MoveOperation.Start)
+            cursor.movePosition(
+                cursor.MoveOperation.Down,
+                cursor.MoveMode.KeepAnchor,
+                doc.lineCount() - self._max_lines
+            )
+            cursor.removeSelectedText()
+
+    def _clear(self):
+        """Clear all console content."""
+        self._display.clear()
+
+
 _FILE_ICONS = {
     "image":   ("🖼", "#00d4ff"), "video":   ("🎬", "#ff6b00"),
     "audio":   ("🎵", "#cc44ff"), "pdf":     ("📄", "#ff4444"),
@@ -2536,6 +2701,14 @@ class MainWindow(QMainWindow):
         self._clipboard_sig.connect(self._show_clipboard_panel)
         self._cam_stop = threading.Event()
 
+        # ── Setup stdout/stderr redirection to Console Output panel ──
+        # Captures all print(), tracebacks, and library warnings in real-time.
+        # Preserves original streams so terminal output continues working (tee pattern).
+        self._original_stdout = sys.stdout
+        self._original_stderr = sys.stderr
+        sys.stdout = ConsoleRedirector(self._console_widget, QColor(C.TEXT), self._original_stdout)
+        sys.stderr = ConsoleRedirector(self._console_widget, QColor(C.RED), self._original_stderr)
+
         # Camera preview overlay (child of central widget, positioned in resizeEvent)
         self._cam_preview = _CameraPreview(self.centralWidget())
 
@@ -3226,9 +3399,47 @@ class MainWindow(QMainWindow):
             l.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
             return l
 
-        lay.addWidget(_sec("ACTIVITY LOG"))
+        # ── Log sections with splitter (similar pattern to center HUD/Content split) ──
+        # Vertical splitter allows dynamic resizing between Activity Log and Console Output.
+        # Console Output starts collapsed (hidden) by default - expands when user drags handle up.
+        self._right_split = QSplitter(Qt.Orientation.Vertical)
+        self._right_split.setStyleSheet(f"""
+            QSplitter::handle:vertical {{
+                height: 4px;
+                background: transparent;
+            }}
+            QSplitter::handle:hover {{
+                background: {C.PRI_DIM};
+            }}
+        """)
+
+        # Activity Log widget (top section)
+        activity_log_widget = QWidget()
+        activity_lay = QVBoxLayout(activity_log_widget)
+        activity_lay.setContentsMargins(0, 0, 0, 0)
+        activity_lay.setSpacing(4)
+        activity_lay.addWidget(_sec("ACTIVITY LOG"))
         self._log = LogWidget()
-        lay.addWidget(self._log, stretch=1)
+        activity_lay.addWidget(self._log, stretch=1)
+
+        # Console Output widget (bottom section, collapsible)
+        self._console_widget = ConsoleWidget()
+
+        # Add both to splitter
+        self._right_split.addWidget(activity_log_widget)
+        self._right_split.addWidget(self._console_widget)
+
+        # Configure splitter behavior
+        self._right_split.setStretchFactor(0, 3)  # Activity Log gets more space
+        self._right_split.setStretchFactor(1, 1)  # Console Output gets less
+        self._right_split.setCollapsible(0, False)  # Activity Log cannot collapse
+        self._right_split.setCollapsible(1, True)   # Console Output can collapse
+
+        # Start with Console collapsed (height = 0)
+        self._right_split.setSizes([600, 0])  # 600 is estimate, Console at 0
+
+        # Add splitter to main layout with stretch
+        lay.addWidget(self._right_split, stretch=1)
 
         sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
         sep.setStyleSheet(f"color: {C.BORDER}; margin: 2px 0;")
@@ -3560,6 +3771,15 @@ class MainWindow(QMainWindow):
 
         lay.addWidget(_fl("[F4] Mute  ·  [F11] Fullscreen"))
         lay.addStretch()
+
+        # MCP server status indicator
+        self._mcp_status_label = QLabel("MCP: ○")
+        self._mcp_status_label.setFont(QFont("Courier New", 7))
+        self._mcp_status_label.setStyleSheet(f"color: #666; background: transparent;")
+        self._mcp_status_label.setToolTip("MCP Servers: Not initialized")
+        lay.addWidget(self._mcp_status_label)
+        lay.addWidget(_fl("  ·  "))
+
         lay.addWidget(_fl("By FatihMakes", C.PRI_DIM))
         return w
 
@@ -4010,6 +4230,15 @@ class MainWindow(QMainWindow):
         self._assistant_name = _read_full_config().get("assistant_name", "JARVIS") or "JARVIS"
         self._log.append_log(f"SYS: Initialised. OS={os_name.upper()}. {self._assistant_name} online.")
 
+    def closeEvent(self, event):
+        """Restore original stdout/stderr before closing."""
+        # Safety check: only restore if redirection was set up
+        if hasattr(self, '_original_stdout') and self._original_stdout:
+            sys.stdout = self._original_stdout
+        if hasattr(self, '_original_stderr') and self._original_stderr:
+            sys.stderr = self._original_stderr
+        super().closeEvent(event)
+
 class _RootShim:
     def __init__(self, app: QApplication):
         self._app = app
@@ -4114,6 +4343,59 @@ class JarvisUI:
 
     def write_log(self, text: str):
         self._win._log_sig.emit(text)
+
+    def update_mcp_status(self, server_statuses: dict):
+        """
+        Update MCP server status indicator.
+        server_statuses: dict of server_id -> status ("connected"|"connecting"|"disconnected"|"error")
+        """
+        if not hasattr(self._win, "_mcp_status_label"):
+            return
+
+        if not server_statuses:
+            self._win._mcp_status_label.setText("MCP: ○")
+            self._win._mcp_status_label.setStyleSheet("color: #666; background: transparent;")
+            self._win._mcp_status_label.setToolTip("MCP Servers: None configured")
+            return
+
+        # Build status text with icons for each server
+        icons = {
+            "connected": "●",
+            "connecting": "◐",
+            "disconnected": "○",
+            "error": "✗"
+        }
+        colors = {
+            "connected": "#0f0",
+            "connecting": "#ff0",
+            "disconnected": "#666",
+            "error": "#f00"
+        }
+
+        # Generate display text: "MCP: ● fs ○ db"
+        status_parts = [f"{icons.get(status, '○')} {server_id}"
+                       for server_id, status in server_statuses.items()]
+        display_text = "MCP: " + " ".join(status_parts)
+
+        # Choose color based on overall health
+        if any(s == "error" for s in server_statuses.values()):
+            color = colors["error"]
+        elif any(s == "connecting" for s in server_statuses.values()):
+            color = colors["connecting"]
+        elif all(s == "connected" for s in server_statuses.values()):
+            color = colors["connected"]
+        else:
+            color = colors["disconnected"]
+
+        # Build tooltip with details
+        tooltip_lines = ["MCP Servers:"]
+        for server_id, status in server_statuses.items():
+            tooltip_lines.append(f"  {icons[status]} {server_id}: {status.capitalize()}")
+        tooltip = "\n".join(tooltip_lines)
+
+        self._win._mcp_status_label.setText(display_text)
+        self._win._mcp_status_label.setStyleSheet(f"color: {color}; background: transparent;")
+        self._win._mcp_status_label.setToolTip(tooltip)
 
     def wait_for_api_key(self):
         while not self._win._ready:

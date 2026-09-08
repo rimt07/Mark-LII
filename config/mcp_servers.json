@@ -1,0 +1,25 @@
+{
+  "_comment": "MCP Server Configuration - Edit 'command' args[0] to point to your PyMCP-FS installation. Clone from: https://github.com/hypercat/PyMCP-FS",
+  "servers": {
+    "fs": {
+      "name": "PyMCP-FS",
+      "description": "Local filesystem access",
+      "enabled": true,
+      "transport": "stdio",
+      "command": "python",
+      "args": [
+        "D:/path/to/PyMCP-FS/main.py",
+        "-d",
+        "D:/Programacion/ia/Mark-LII"
+      ],
+      "restart_on_failure": true,
+      "health_check_interval": 60
+    }
+  },
+  "settings": {
+    "namespace_pattern": "{server}_{tool}",
+    "log_level": "INFO",
+    "startup_timeout": 30,
+    "tool_timeout": 60
+  }
+}
