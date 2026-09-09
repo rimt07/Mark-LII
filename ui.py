@@ -771,9 +771,15 @@ class LogWidget(QTextEdit):
         self._pos    = 0
         tl = self._text.lower()
         _ai_pfx = f"{self._ai_name_lc}:"
+
+        # Detect backend/TTS-specific prefixes for color coding
         if   tl.startswith("you:"):                              self._tag = "you"
         elif tl.startswith(_ai_pfx) or tl.startswith("jarvis:"): self._tag = "ai"
         elif tl.startswith("file:"):                             self._tag = "file"
+        elif tl.startswith("[ollama]"):                          self._tag = "ollama"
+        elif tl.startswith("[kokoro]"):                          self._tag = "kokoro"
+        elif tl.startswith("[whisper]"):                         self._tag = "whisper"
+        elif tl.startswith("[gemini]"):                          self._tag = "gemini"
         elif "err" in tl:                                        self._tag = "err"
         else:                                                    self._tag = "sys"
         self._tmr.start(6)
@@ -784,11 +790,15 @@ class LogWidget(QTextEdit):
             cur = self.textCursor()
             fmt = cur.charFormat()
             col = {
-                "you":  qcol(C.WHITE),
-                "ai":   qcol(C.PRI),
-                "err":  qcol(C.RED),
-                "file": qcol(C.GREEN),
-                "sys":  qcol(C.ACC2),
+                "you":     qcol(C.WHITE),
+                "ai":      qcol(C.PRI),
+                "err":     qcol(C.RED),
+                "file":    qcol(C.GREEN),
+                "sys":     qcol(C.ACC2),
+                "ollama":  qcol("#00C853"),  # Green for Ollama
+                "kokoro":  qcol("#00BCD4"),  # Cyan for Kokoro TTS
+                "whisper": qcol("#FF9800"),  # Orange for Whisper STT
+                "gemini":  qcol("#4A9EFF"),  # Blue for Gemini
             }.get(self._tag, qcol(C.TEXT))
             fmt.setForeground(QBrush(col))
             cur.movePosition(cur.MoveOperation.End)
@@ -2751,6 +2761,35 @@ class MainWindow(QMainWindow):
         from memory.config_manager import get_brief_enabled as _gbe
         self._update_brief_btn(_gbe())
 
+        # Load backend/TTS config to set combo box defaults
+        try:
+            import json
+            from pathlib import Path as P
+            config_path = P(__file__).parent / "config" / "llm_config.json"
+            with open(config_path, 'r') as f:
+                llm_cfg = json.load(f)
+
+            backend = llm_cfg.get("backend", "gemini")
+            if backend == "gemini":
+                self._backend_combo.setCurrentText("Gemini Live")
+            else:
+                self._backend_combo.setCurrentText("Ollama (Local)")
+
+            # TTS combo (Ollama only)
+            if backend == "ollama":
+                tts_engine = llm_cfg.get("ollama", {}).get("tts", {}).get("engine", "edge")
+                if tts_engine == "kokoro":
+                    self._tts_combo.setCurrentText("Kokoro (Offline, Best Quality)")
+                elif tts_engine == "edge":
+                    self._tts_combo.setCurrentText("Edge TTS (Requires Internet)")
+                else:
+                    self._tts_combo.setCurrentText("None (Text Only)")
+                self._tts_combo.setEnabled(True)
+            else:
+                self._tts_combo.setEnabled(False)
+        except Exception:
+            pass  # Defaults already set
+
         self._clock_tmr = QTimer(self)
         self._clock_tmr.timeout.connect(self._tick_clock)
         self._clock_tmr.start(1000)
@@ -3677,6 +3716,67 @@ class MainWindow(QMainWindow):
         plugin_btn.clicked.connect(self._open_plugin_manager)
         lay.addWidget(plugin_btn)
 
+        # Backend selection
+        lay.addSpacing(8)
+        backend_hdr = QLabel("◈ BACKEND")
+        backend_hdr.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+        backend_hdr.setStyleSheet(f"color: {C.PRI_DIM}; background: transparent; "
+                                  f"border-bottom: 1px solid {C.BORDER}; padding-bottom: 4px;")
+        lay.addWidget(backend_hdr)
+
+        self._backend_combo = QComboBox()
+        self._backend_combo.addItems(["Gemini Live", "Ollama (Local)"])
+        self._backend_combo.setFixedHeight(26)
+        self._backend_combo.setFont(QFont("Courier New", 7))
+        self._backend_combo.setStyleSheet(f"""
+            QComboBox {{
+                background: #00091a; color: {C.TEXT};
+                border: 1px solid {C.BORDER}; border-radius: 3px;
+                padding: 3px 8px;
+            }}
+            QComboBox:hover {{ border-color: {C.PRI_DIM}; }}
+            QComboBox::drop-down {{ border: none; }}
+            QComboBox::down-arrow {{ image: url(noimg); border-left: 4px solid transparent;
+                                     border-right: 4px solid transparent; border-top: 6px solid {C.TEXT_MED}; }}
+        """)
+        self._backend_combo.currentTextChanged.connect(self._on_backend_change)
+        lay.addWidget(self._backend_combo)
+
+        # TTS selection (for Ollama only)
+        tts_hdr = QLabel("◈ TTS ENGINE")
+        tts_hdr.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+        tts_hdr.setStyleSheet(f"color: {C.PRI_DIM}; background: transparent; "
+                              f"border-bottom: 1px solid {C.BORDER}; padding-bottom: 4px; margin-top: 4px;")
+        lay.addWidget(tts_hdr)
+
+        self._tts_combo = QComboBox()
+        self._tts_combo.addItems([
+            "Kokoro (Offline, Best Quality)",
+            "Edge TTS (Requires Internet)",
+            "None (Text Only)"
+        ])
+        self._tts_combo.setFixedHeight(26)
+        self._tts_combo.setFont(QFont("Courier New", 7))
+        self._tts_combo.setStyleSheet(f"""
+            QComboBox {{
+                background: #00091a; color: {C.TEXT};
+                border: 1px solid {C.BORDER}; border-radius: 3px;
+                padding: 3px 8px;
+            }}
+            QComboBox:hover {{ border-color: {C.PRI_DIM}; }}
+            QComboBox::drop-down {{ border: none; }}
+            QComboBox::down-arrow {{ image: url(noimg); border-left: 4px solid transparent;
+                                     border-right: 4px solid transparent; border-top: 6px solid {C.TEXT_MED}; }}
+        """)
+        self._tts_combo.currentTextChanged.connect(self._on_tts_change)
+        lay.addWidget(self._tts_combo)
+
+        # Warning label
+        warn_lbl = QLabel("⚠ Requires restart to apply")
+        warn_lbl.setFont(QFont("Courier New", 6))
+        warn_lbl.setStyleSheet("color: #FFA726; background: transparent;")
+        lay.addWidget(warn_lbl)
+
         w.adjustSize()
         return w
 
@@ -3845,6 +3945,42 @@ class MainWindow(QMainWindow):
 
         lay.addWidget(_fl("[F4] Mute  ·  [F11] Fullscreen"))
         lay.addStretch()
+
+        # Backend indicator (Gemini vs Ollama)
+        self._backend_label = QLabel("☁ Gemini")
+        self._backend_label.setFont(QFont("Segoe UI", 8))
+        self._backend_label.setStyleSheet("color: #4A9EFF; background: transparent;")
+        self._backend_label.setToolTip("Backend: Gemini Live")
+        lay.addWidget(self._backend_label)
+        lay.addWidget(_fl("  ·  "))
+
+        # TTS indicator (Kokoro/Edge/None)
+        self._tts_label = QLabel("TTS: --")
+        self._tts_label.setFont(QFont("Segoe UI", 7))
+        self._tts_label.setStyleSheet("color: #666; background: transparent;")
+        self._tts_label.setToolTip("Text-to-Speech: Not initialized")
+        lay.addWidget(self._tts_label)
+        lay.addWidget(_fl("  ·  "))
+
+        # Offline mode badge (only visible when 100% local)
+        self._offline_badge = QLabel("● OFFLINE")
+        self._offline_badge.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
+        self._offline_badge.setStyleSheet("""
+            color: #00C853;
+            background: rgba(0, 200, 83, 0.15);
+            border: 1px solid #00C853;
+            border-radius: 8px;
+            padding: 2px 8px;
+        """)
+        self._offline_badge.setToolTip(
+            "100% Offline Mode\n"
+            "✓ Ollama (Local LLM)\n"
+            "✓ Whisper (Local STT)\n"
+            "✓ Kokoro (Local TTS)"
+        )
+        self._offline_badge.hide()
+        lay.addWidget(self._offline_badge)
+        lay.addWidget(_fl("  ·  "))
 
         # MCP server status indicator
         self._mcp_status_label = QLabel("MCP: ○")
@@ -4145,6 +4281,63 @@ class MainWindow(QMainWindow):
         self._log.append_log("SYS: Audio devices updated.")
         if self.on_audio_device_change:
             self.on_audio_device_change()
+
+    # ── Backend/TTS configuration ────────────────────────────────────────────
+
+    def _on_backend_change(self, backend_text: str):
+        """Save backend preference to llm_config.json."""
+        backend = "gemini" if "Gemini" in backend_text else "ollama"
+
+        try:
+            import json
+            from pathlib import Path as P
+            config_path = P(__file__).parent / "config" / "llm_config.json"
+
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+
+            config["backend"] = backend
+
+            with open(config_path, 'w') as f:
+                json.dump(config, f, indent=2)
+
+            # Enable/disable TTS combo based on backend
+            self._tts_combo.setEnabled(backend == "ollama")
+
+            self._log.append_log(f"SYS: Backend set to {backend_text}. Restart MARK LII to apply.")
+        except Exception as e:
+            self._log.append_log(f"ERR: Failed to save backend preference — {e}")
+
+    def _on_tts_change(self, tts_text: str):
+        """Save TTS engine preference to llm_config.json (Ollama only)."""
+        if "Kokoro" in tts_text:
+            engine = "kokoro"
+        elif "Edge" in tts_text:
+            engine = "edge"
+        else:
+            engine = "none"
+
+        try:
+            import json
+            from pathlib import Path as P
+            config_path = P(__file__).parent / "config" / "llm_config.json"
+
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+
+            if "ollama" not in config:
+                config["ollama"] = {}
+            if "tts" not in config["ollama"]:
+                config["ollama"]["tts"] = {}
+
+            config["ollama"]["tts"]["engine"] = engine
+
+            with open(config_path, 'w') as f:
+                json.dump(config, f, indent=2)
+
+            self._log.append_log(f"SYS: TTS engine set to {tts_text}. Restart MARK LII to apply.")
+        except Exception as e:
+            self._log.append_log(f"ERR: Failed to save TTS preference — {e}")
 
     # ── Memory panel ─────────────────────────────────────────────────────────
 
@@ -4470,6 +4663,81 @@ class JarvisUI:
         self._win._mcp_status_label.setText(display_text)
         self._win._mcp_status_label.setStyleSheet(f"color: {color}; background: transparent;")
         self._win._mcp_status_label.setToolTip(tooltip)
+
+    def update_backend_status(self, backend: str, details: str = ""):
+        """
+        Update backend indicator (Gemini vs Ollama).
+        backend: "gemini" | "ollama"
+        details: additional info (model name, etc.)
+        """
+        if not hasattr(self._win, "_backend_label"):
+            return
+
+        if backend == "gemini":
+            icon = "☁"
+            color = "#4A9EFF"
+            text = "Gemini"
+        else:  # ollama
+            icon = "⚙"
+            color = "#00C853"
+            text = f"Ollama ({details})" if details else "Ollama"
+
+        self._win._backend_label.setText(f"{icon} {text}")
+        self._win._backend_label.setStyleSheet(f"color: {color}; background: transparent;")
+        self._win._backend_label.setToolTip(f"Backend: {text}")
+
+    def update_tts_status(self, engine: str, voice: str = ""):
+        """
+        Update TTS engine indicator.
+        engine: "kokoro" | "edge" | "none"
+        voice: voice name
+        """
+        if not hasattr(self._win, "_tts_label"):
+            return
+
+        icons = {
+            "kokoro": "🔇",
+            "edge": "🔊",
+            "none": "🔕"
+        }
+        colors = {
+            "kokoro": "#00C853",
+            "edge": "#FFA726",
+            "none": "#666"
+        }
+
+        icon = icons.get(engine, "")
+        color = colors.get(engine, "#666")
+
+        if engine == "none":
+            text = "Text Only"
+        elif voice:
+            text = f"{engine.title()}: {voice}"
+        else:
+            text = engine.title()
+
+        self._win._tts_label.setText(f"{icon} {text}")
+        self._win._tts_label.setStyleSheet(f"color: {color}; background: transparent;")
+
+        tooltip = {
+            "kokoro": "Kokoro TTS (Fully Offline)",
+            "edge": "Edge TTS (Requires Internet)",
+            "none": "Text-only mode (No TTS)"
+        }.get(engine, "")
+        self._win._tts_label.setToolTip(tooltip)
+
+    def update_offline_mode(self, is_offline: bool):
+        """
+        Show/hide offline mode badge.
+        is_offline: True when using Ollama+Whisper+Kokoro (100% local)
+        """
+        if not hasattr(self._win, "_offline_badge"):
+            return
+
+        if is_offline:
+            self._win._offline_badge.show()
+        else:
+            self._win._offline_badge.hide()
 
     def wait_for_api_key(self):
         while not self._win._ready:

@@ -1983,6 +1983,20 @@ class JarvisLive:
 
             await self._ollama_backend.start_session()
             self.ui.write_log("SYS: Ollama backend ready.")
+
+            # Update UI indicators for Ollama
+            model_name = ollama_config.get("model", "llama3.2")
+            self.ui.update_backend_status("ollama", model_name)
+
+            tts_engine = ollama_config.get("tts", {}).get("engine", "edge")
+            tts_voice = ollama_config.get("tts", {}).get("voice", "")
+            self.ui.update_tts_status(tts_engine, tts_voice)
+
+            # Show offline badge if fully local (Whisper + Ollama + Kokoro)
+            stt_engine = ollama_config.get("stt", {}).get("engine", "whisper")
+            is_fully_offline = (stt_engine == "whisper" and tts_engine == "kokoro")
+            self.ui.update_offline_mode(is_fully_offline)
+
             self.ui.set_state("LISTENING")
 
             # Ollama mode: simplified loop (no Gemini session management)
@@ -2003,6 +2017,11 @@ class JarvisLive:
 
         # Gemini Live mode
         print(f"[JARVIS] Using Gemini Live backend")
+        # Update UI for Gemini backend
+        self.ui.update_backend_status("gemini")
+        self.ui.update_tts_status("none")  # Gemini has native audio, no separate TTS
+        self.ui.update_offline_mode(False)  # Gemini is cloud-based
+
         while True:
             try:
                 print("[JARVIS] Connecting...")
