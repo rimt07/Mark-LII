@@ -821,12 +821,19 @@ class ConsoleRedirector:
         self.color = color
         self.original = original_stream
         self._buffer = []
+        self._last_char = "\n"  # tracks last emitted char across flushes;
+                                # starts as "\n" so the first tag isn't prefixed
         self._timer = QTimer()
         self._timer.timeout.connect(self._flush_buffer)
         self._timer.start(100)  # Flush every 100ms
 
     def write(self, text):
-        if text and text.strip():
+        # Only skip completely empty writes. Do NOT skip whitespace-only writes:
+        # Python emits the trailing "\n" of every print() as a *separate* write
+        # call, so filtering on text.strip() threw those newlines away and made
+        # all console messages run together on one line. Keeping newlines makes
+        # the panel match real terminal output line-for-line.
+        if text:
             self._buffer.append((text, self.color))
             if len(self._buffer) > 50:  # Emergency flush if buffer fills
                 self._flush_buffer()
@@ -845,10 +852,34 @@ class ConsoleRedirector:
                 pass
 
     def _flush_buffer(self):
-        if self._buffer:
-            combined = "".join(t for t, _ in self._buffer)
-            self.text_widget.append_text(combined, self.color)
-            self._buffer.clear()
+        if not self._buffer:
+            return
+        combined = "".join(t for t, _ in self._buffer)
+        self._buffer.clear()
+
+        # Many messages are printed as "[Tag] text" with NO trailing newline,
+        # so consecutive ones run together:
+        #   "[Plugins] done[MCP] init[Audio] ready"
+        # Break the line before every "[" that opens a new tag mid-line. A "["
+        # is treated as a new tag only when the preceding emitted char is not
+        # already a newline, so tags that are correctly on their own line and
+        # literal "[" inside an ongoing line both get a clean break.
+        out = []
+        prev = self._last_char
+        for ch in combined:
+            if ch == "[" and prev not in ("\n", ""):
+                out.append("\n")
+                prev = "\n"
+            out.append(ch)
+            prev = ch
+        normalized = "".join(out)
+
+        # Remember the last char (ignoring nothing) for the next flush so a tag
+        # split across two buffers is still handled correctly.
+        if normalized:
+            self._last_char = normalized[-1]
+
+        self.text_widget.append_text(normalized, self.color)
 
     # ── Additional stream protocol methods for subprocess compatibility ──
     def fileno(self):
@@ -890,7 +921,7 @@ class ConsoleWidget(QWidget):
     Console output panel for displaying raw stdout/stderr.
 
     Shows Python print() statements, tracebacks, and library warnings with
-    thread-safe updates via Qt signals. Automatically trims to 1000 lines
+    thread-safe updates via Qt signals. Automatically trims to 2000 lines
     to prevent memory bloat during long sessions.
     """
     _sig = pyqtSignal(str, object)  # (text, color)
@@ -966,8 +997,8 @@ class ConsoleWidget(QWidget):
         # Connect signal for thread-safe updates
         self._sig.connect(self._append)
 
-        # Limit of 1000 lines to prevent unbounded memory growth
-        self._max_lines = 1000
+        # Limit of 2000 lines to prevent unbounded memory growth
+        self._max_lines = 2000
 
     def append_text(self, text: str, color=None):
         """Thread-safe: add text to console from any thread."""
@@ -988,7 +1019,7 @@ class ConsoleWidget(QWidget):
         self._display.setTextCursor(cursor)
         self._display.ensureCursorVisible()
 
-        # Auto-trim: keep max 1000 lines to prevent memory bloat
+        # Auto-trim: keep max 2000 lines to prevent memory bloat
         doc = self._display.document()
         if doc.lineCount() > self._max_lines:
             cursor.movePosition(cursor.MoveOperation.Start)
