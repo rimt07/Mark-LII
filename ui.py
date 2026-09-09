@@ -895,8 +895,27 @@ class ConsoleRedirector:
     def fileno(self):
         """Return file descriptor of original stream (for subprocess/MCP compatibility)."""
         if self.original and hasattr(self.original, 'fileno'):
-            return self.original.fileno()
-        raise AttributeError("fileno not available")
+            try:
+                return self.original.fileno()
+            except (AttributeError, OSError, ValueError):
+                pass
+        # If original doesn't have fileno, try to get system default
+        # This ensures subprocess creation always has a valid file descriptor
+        import sys
+        try:
+            # Return the file descriptor of the appropriate system stream
+            # Check if we're stdout or stderr based on color (red = stderr)
+            if hasattr(self, 'color') and self.color and self.color.name() == '#ff3355':
+                # This is stderr
+                return sys.__stderr__.fileno()
+            else:
+                # This is stdout
+                return sys.__stdout__.fileno()
+        except Exception:
+            # Last resort: return a safe default (stdout=1, stderr=2)
+            if hasattr(self, 'color') and self.color and self.color.name() == '#ff3355':
+                return 2  # stderr
+            return 1  # stdout
 
     def isatty(self):
         """Return whether original stream is a TTY."""
