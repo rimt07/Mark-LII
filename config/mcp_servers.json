@@ -10,7 +10,7 @@
       "args": [
         "-y",
         "@modelcontextprotocol/server-filesystem",
-        "C:/dev/"
+        "D:/programacion/"
       ],
       "restart_on_failure": true,
       "health_check_interval": 60

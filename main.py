@@ -1236,11 +1236,20 @@ class JarvisLive:
                 # Check if it's an MCP tool (namespace pattern: {server_id}_{tool_name})
                 _mcp_prefixes = self._mcp_manager.get_server_prefixes()
                 if any(name.startswith(prefix) for prefix in _mcp_prefixes):
-                    # Execute MCP tool via manager (wrapped in executor with asyncio.run)
-                    r = await loop.run_in_executor(
-                        None,
-                        lambda: asyncio.run(self._mcp_manager.execute_tool(name, args))
-                    )
+                    # Execute the MCP tool on THIS event loop — the same loop the
+                    # MCP client/stdio streams were created on during connect().
+                    # Do NOT wrap in run_in_executor + asyncio.run: that spins up a
+                    # separate event loop in a worker thread, and the anyio stdio
+                    # streams belong to the original loop, so call_tool() never
+                    # gets woken and hangs forever (call logged, result never
+                    # arrives). A timeout guards against a genuinely stuck server.
+                    try:
+                        r = await asyncio.wait_for(
+                            self._mcp_manager.execute_tool(name, args),
+                            timeout=30.0,
+                        )
+                    except asyncio.TimeoutError:
+                        r = f"Sir, the {name} tool timed out."
                     result = r or "Done."
                 elif self._plugin_registry.has(name):
                     r = await loop.run_in_executor(

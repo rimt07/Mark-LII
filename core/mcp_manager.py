@@ -30,6 +30,7 @@ class MCPServerConnection:
         self._connected = False
         self._retry_count = 0
         self._max_retries = 3
+        self._errlog_file = None  # devnull sink for child stderr when no real fd
 
     async def connect(self) -> bool:
         """
@@ -43,24 +44,38 @@ class MCPServerConnection:
 
             self.logger(f"[MCP] Connecting to server '{self.server_id}'...")
 
-            # CRITICAL FIX: Get REAL system streams before subprocess launch
-            # Even if sys.stdout/stderr were temporarily restored, subprocess might
-            # have already inherited redirected descriptors. We must get the
-            # ORIGINAL file descriptors before any redirection happened.
             import os
-            original_stdout = None
-            original_stderr = None
 
-            # Try to get original streams from ConsoleRedirector if present
-            if hasattr(sys.stdout, 'original') and sys.stdout.original:
-                original_stdout = sys.stdout.original
-            else:
-                original_stdout = sys.stdout
+            # CRITICAL FIX: MCP's stdio_client passes `errlog` straight to
+            # subprocess as the child process's stderr, and subprocess calls
+            # errlog.fileno() on Windows. `errlog` defaults to sys.stderr, which
+            # the UI has replaced with a widget-backed redirector whose fileno()
+            # raises AttributeError ("fileno not available"). Under pythonw the
+            # redirector's `.original` is None too. Swapping sys.stderr here does
+            # NOT help, because stdio_client bound its default at import time.
+            # So we resolve a stream that has a REAL OS file descriptor and pass
+            # it explicitly as errlog.
+            def _has_real_fileno(stream):
+                if stream is None:
+                    return False
+                fn = getattr(stream, "fileno", None)
+                if fn is None:
+                    return False
+                try:
+                    fd = fn()
+                    return isinstance(fd, int) and fd >= 0
+                except Exception:
+                    return False
 
-            if hasattr(sys.stderr, 'original') and sys.stderr.original:
-                original_stderr = sys.stderr.original
+            # Prefer the redirector's underlying original stderr if it is real,
+            # otherwise fall back to the null device (valid fd, discards output).
+            candidate = getattr(sys.stderr, "original", None) or sys.stderr
+            if _has_real_fileno(candidate):
+                errlog = candidate
             else:
-                original_stderr = sys.stderr
+                if self._errlog_file is None:
+                    self._errlog_file = open(os.devnull, "w")
+                errlog = self._errlog_file
 
             # Build server parameters from config
             server_params = StdioServerParameters(
@@ -69,26 +84,17 @@ class MCPServerConnection:
                 env=self.config.get("env", None)
             )
 
-            # Temporarily set sys streams to originals during subprocess creation
-            saved_stdout = sys.stdout
-            saved_stderr = sys.stderr
-            sys.stdout = original_stdout
-            sys.stderr = original_stderr
+            # Create stdio client context (subprocess + MCP client). Pass errlog
+            # explicitly so the child's stderr is always a real fd, never the UI
+            # redirector object.
+            self._context = stdio_client(server_params, errlog=errlog)
 
-            try:
-                # Create stdio client context (subprocess + MCP client)
-                self._context = stdio_client(server_params)
-
-                # Enter context manager to get read/write streams
-                # This launches the subprocess which NOW inherits correct stdout/stderr
-                read_stream, write_stream = await asyncio.wait_for(
-                    self._context.__aenter__(),
-                    timeout=10.0  # 10 second timeout for subprocess launch
-                )
-            finally:
-                # Restore redirected streams immediately
-                sys.stdout = saved_stdout
-                sys.stderr = saved_stderr
+            # Enter context manager to get read/write streams.
+            # This launches the subprocess.
+            read_stream, write_stream = await asyncio.wait_for(
+                self._context.__aenter__(),
+                timeout=10.0  # 10 second timeout for subprocess launch
+            )
 
             # Create MCP client session with the streams
             self._client = ClientSession(read_stream, write_stream)
@@ -146,6 +152,7 @@ class MCPServerConnection:
     async def disconnect(self):
         """Clean shutdown of MCP client and subprocess"""
         if not self._connected:
+            self._close_errlog()
             return
 
         try:
@@ -165,6 +172,17 @@ class MCPServerConnection:
             self.logger(f"[MCP] Disconnected from '{self.server_id}'")
         except Exception as e:
             self.logger(f"[MCP] Error during disconnect from '{self.server_id}': {e}")
+        finally:
+            self._close_errlog()
+
+    def _close_errlog(self):
+        """Close the devnull stderr sink if we opened one."""
+        if self._errlog_file is not None:
+            try:
+                self._errlog_file.close()
+            except Exception:
+                pass
+            self._errlog_file = None
 
     async def reconnect(self) -> bool:
         """
