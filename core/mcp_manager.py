@@ -84,9 +84,7 @@ class MCPServerConnection:
                 env=self.config.get("env", None)
             )
 
-            # Create stdio client context (subprocess + MCP client). Pass errlog
-            # explicitly so the child's stderr is always a real fd, never the UI
-            # redirector object.
+
             self._context = stdio_client(server_params, errlog=errlog)
 
             # Enter context manager to get read/write streams.
@@ -99,14 +97,20 @@ class MCPServerConnection:
             # Create MCP client session with the streams
             self._client = ClientSession(read_stream, write_stream)
 
-            # Initialize the session (handshake with server) with timeout
+            # Start receive loop, then complete MCP initialize handshake
             await asyncio.wait_for(
                 self._client.__aenter__(),
-                timeout=5.0  # 5 second timeout for handshake
+                timeout=5.0
+            )
+            await asyncio.wait_for(
+                self._client.initialize(),
+                timeout=30.0  # uvx may download packages on first launch
             )
 
             # Discover available tools
-            await self._discover_tools()
+            if not await self._discover_tools():
+                await self.disconnect()
+                return False
 
             self._connected = True
             self._retry_count = 0
@@ -124,11 +128,11 @@ class MCPServerConnection:
             self._connected = False
             return False
 
-    async def _discover_tools(self):
+    async def _discover_tools(self) -> bool:
         """Discover tools from connected server via list_tools()"""
         if not self._client:
             self.logger(f"[MCP] No client available for tool discovery")
-            return
+            return False
 
         try:
             self.logger(f"[MCP] Requesting tools from '{self.server_id}'...")
@@ -139,24 +143,28 @@ class MCPServerConnection:
             )
             self._tools = result.tools if result else []
             self.logger(f"[MCP] Discovered {len(self._tools)} tools from '{self.server_id}'")
+            return True
         except asyncio.TimeoutError:
             self.logger(f"[MCP] Tool discovery timed out for '{self.server_id}' - server not responding")
             self._tools = []
+            return False
         except Exception as e:
             self.logger(f"[MCP] Tool discovery failed for '{self.server_id}': {e}")
             self.logger(f"[MCP] Exception type: {type(e).__name__}")
             import traceback
             traceback.print_exc()
             self._tools = []
+            return False
 
     async def disconnect(self):
         """Clean shutdown of MCP client and subprocess"""
-        if not self._connected:
+        if not self._connected and not self._client and not self._context:
             self._close_errlog()
             return
 
         try:
-            self.logger(f"[MCP] Disconnecting from '{self.server_id}'...")
+            if self._connected:
+                self.logger(f"[MCP] Disconnecting from '{self.server_id}'...")
 
             # Exit client session and stdio context. Each __aexit__ is isolated:
             # the MCP SDK's stdio_client wraps an anyio task group, and anyio

@@ -1,25 +1,43 @@
 {
-  "_comment": "MCP Server Configuration - Official Anthropic MCP filesystem server",
-  "servers": {
-    "fs": {
-      "name": "MCP Filesystem Server",
-      "description": "Official Anthropic filesystem server for local file access",
-      "enabled": true,
-      "transport": "stdio",
-      "command": "npx",
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-filesystem",
-        "D:/programacion/"
-      ],
-      "restart_on_failure": true,
-      "health_check_interval": 60
-    }
-  },
-  "settings": {
-    "namespace_pattern": "{server}_{tool}",
-    "log_level": "INFO",
-    "startup_timeout": 30,
-    "tool_timeout": 60
-  }
+	"_comment": "MCP Server Configuration - Official Anthropic MCP filesystem server",
+	"servers": {
+		"fs": {
+			"name": "MCP Filesystem Server",
+			"description": "Official Anthropic filesystem server for local file access",
+			"enabled": true,
+			"transport": "stdio",
+			"command": "npx",
+			"args": [
+				"-y",
+				"@modelcontextprotocol/server-filesystem",
+				"d:/programacion/"
+			],
+			"restart_on_failure": true,
+			"health_check_interval": 60
+		},
+		"shell-mcp-server": {
+			"name": "MCP Shell Server",
+			"description": "Servidor mcp para interactuar con la terminal o shell",
+			"enabled": true,
+			"transport": "stdio",
+			"command": "C:/Users/rimt_/.local/bin/uvx.exe",
+			"args": [
+				"--with",
+				"mcp[cli]>=1.29,<2",
+				"mcp-server-for-powershell",
+				"--language-mode",
+				"1",
+				"--cwd",
+				"d:/programacion/"
+			],
+			"restart_on_failure": true,
+			"health_check_interval": 60
+		}
+	},
+	"settings": {
+		"namespace_pattern": "{server}_{tool}",
+		"log_level": "INFO",
+		"startup_timeout": 30,
+		"tool_timeout": 60
+	}
 }
