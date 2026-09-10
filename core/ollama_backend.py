@@ -17,10 +17,23 @@ from core.stt import WhisperSTT
 
 import numpy as np
 
-# Sentence boundary for streaming TTS — speak each clause as the LLM generates it.
+# Sentence/clause boundaries for streaming TTS.
 _SENT_END = re.compile(r'(?<=[.!?])\s+|(?<=\n)\s*\n')
-# If the model omits punctuation, flush a long buffer at the last space.
-_MAX_TTS_CHUNK = 120
+_CLAUSE_END = re.compile(r'(?<=[,;])\s+')
+_TTS_SENTINEL = object()
+
+_TTS_FLOW_DEFAULTS = {
+    "merge_max_chars": 400,
+    "max_chunk_chars": 400,
+    "clause_flush_chars": 100,
+    "flush_timeout_sec": 1.8,
+    "min_flush_chars": 40,
+    "max_pause_ms": 200,
+    "trailing_pause_ms": 60,
+    "mid_pad_ms": 45,
+    "last_pad_ms": 120,
+    "warmup_phrase": "Hola.",
+}
 
 
 class OllamaBackend:
@@ -91,6 +104,21 @@ class OllamaBackend:
         self._is_speaking = False
         self._interrupted = False
         self._speak_lock = asyncio.Lock()
+        self._apply_tts_flow_config({})
+
+    def _apply_tts_flow_config(self, tts_config: dict) -> None:
+        """Load TTS pacing options from config/llm_config.json → ollama.tts.flow."""
+        flow = {**_TTS_FLOW_DEFAULTS, **(tts_config.get("flow") or {})}
+        self._tts_merge_max_chars = int(flow["merge_max_chars"])
+        self._tts_max_chunk_chars = int(flow["max_chunk_chars"])
+        self._tts_clause_flush_chars = int(flow["clause_flush_chars"])
+        self._tts_flush_timeout_sec = float(flow["flush_timeout_sec"])
+        self._tts_min_flush_chars = int(flow["min_flush_chars"])
+        self._tts_max_pause_ms = int(flow["max_pause_ms"])
+        self._tts_trailing_pause_ms = int(flow["trailing_pause_ms"])
+        self._tts_mid_pad_ms = int(flow["mid_pad_ms"])
+        self._tts_last_pad_ms = int(flow["last_pad_ms"])
+        self._tts_warmup_phrase = str(flow["warmup_phrase"] or "Hola.")
 
     async def initialize(self, system_prompt: str, tools: List[dict], tool_executor: Callable):
         """Initialize Ollama backend and load models"""
@@ -175,6 +203,7 @@ class OllamaBackend:
 
             # Initialize TTS
             tts_config = self.config.get("tts", {})
+            self._apply_tts_flow_config(tts_config)
             tts_engine = tts_config.get("engine", "edge")
 
             if tts_engine == "kokoro":
@@ -187,10 +216,15 @@ class OllamaBackend:
                         lang=tts_config.get("lang", "en-us"),
                         model_path=tts_config.get("model_path"),
                         voices_path=tts_config.get("voices_path"),
-                        logger=self.ui_logger
+                        logger=self.ui_logger,
+                        max_pause_ms=self._tts_max_pause_ms,
+                        trailing_pause_ms=self._tts_trailing_pause_ms,
                     )
                     if self.tts_kokoro.initialize():
                         self.ui_logger(f"[Ollama] Using Kokoro TTS (offline) with voice: {tts_config.get('voice', 'af_sarah')}")
+                        await asyncio.to_thread(
+                            self.tts_kokoro.warmup, self._tts_warmup_phrase
+                        )
                     else:
                         self.ui_logger("[Ollama] Kokoro TTS initialization failed, falling back to Edge TTS")
                         tts_engine = "edge"  # Fallback to Edge TTS
@@ -528,8 +562,10 @@ class OllamaBackend:
         }
 
     def _extract_sentences(self, buf: str) -> tuple[list[str], str]:
-        """Pull complete sentences (or long clauses) from a growing text buffer."""
+        """Pull complete sentences, clauses, or long spans from a text buffer."""
         sentences: list[str] = []
+        max_chunk = self._tts_max_chunk_chars
+        clause_at = self._tts_clause_flush_chars
         while buf:
             match = _SENT_END.search(buf)
             if match:
@@ -538,10 +574,18 @@ class OllamaBackend:
                 if sentence:
                     sentences.append(sentence)
                 continue
-            if len(buf) >= _MAX_TTS_CHUNK:
-                split_at = buf.rfind(" ", 0, _MAX_TTS_CHUNK)
+            if len(buf) >= clause_at:
+                match = _CLAUSE_END.search(buf)
+                if match:
+                    sentence = buf[: match.end()].strip()
+                    buf = buf[match.end() :]
+                    if sentence:
+                        sentences.append(sentence)
+                    continue
+            if len(buf) >= max_chunk:
+                split_at = buf.rfind(" ", 0, max_chunk)
                 if split_at < 20:
-                    split_at = _MAX_TTS_CHUNK
+                    split_at = max_chunk
                 sentence = buf[:split_at].strip()
                 buf = buf[split_at:].lstrip()
                 if sentence:
@@ -549,6 +593,48 @@ class OllamaBackend:
                 continue
             break
         return sentences, buf
+
+    def _try_timeout_flush(
+        self, buf: str, buf_t0: float | None
+    ) -> tuple[list[str], str, float | None]:
+        """Speak buffered text after a pause even if the model omitted punctuation."""
+        if not buf or buf_t0 is None:
+            return [], buf, buf_t0
+        if len(buf.strip()) < self._tts_min_flush_chars:
+            return [], buf, buf_t0
+        if time.monotonic() - buf_t0 < self._tts_flush_timeout_sec:
+            return [], buf, buf_t0
+
+        split_at = buf.rfind(" ", 0, len(buf))
+        if split_at < self._tts_min_flush_chars:
+            return [], buf, buf_t0
+
+        chunk = buf[:split_at].strip()
+        rest = buf[split_at:].lstrip()
+        if not chunk:
+            return [], buf, buf_t0
+        return [chunk], rest, (time.monotonic() if rest else None)
+
+    def _merge_tts_chunks(self, chunks: list[str]) -> list[str]:
+        """Combine short back-to-back sentences into one synthesis call."""
+        merged: list[str] = []
+        buf = ""
+        limit = self._tts_merge_max_chars
+        for raw in chunks:
+            chunk = (raw or "").strip()
+            if not chunk:
+                continue
+            if not buf:
+                buf = chunk
+                continue
+            if len(buf) + 1 + len(chunk) <= limit:
+                buf = f"{buf} {chunk}"
+            else:
+                merged.append(buf)
+                buf = chunk
+        if buf:
+            merged.append(buf)
+        return merged
 
     async def _edge_tts_to_file(self, text: str) -> str | None:
         """Synthesize Edge TTS via streaming HTTP chunks (faster than save())."""
@@ -570,40 +656,63 @@ class OllamaBackend:
                 pass
             raise
 
-    async def _synthesize_tts_file(self, text: str) -> str | None:
-        """Synthesize one sentence/clause to a temp audio file."""
+    async def _synthesize_tts_payload(self, text: str):
+        """
+        Synthesize one TTS unit.
+
+        Returns ('array', (samples, sr)) for Kokoro or ('file', path) for Edge.
+        """
         if not text or self._interrupted:
+            return None
+        from core.tts import sanitize_for_tts
+        text = sanitize_for_tts(text)
+        if not text:
             return None
         if self._vad_debug:
             self.ui_logger(f"[Ollama] TTS synthesizing: {text[:80]!r}")
         if self.tts_engine == "kokoro":
-            return await asyncio.to_thread(self.tts_kokoro.synthesize_sync, text)
+            result = await asyncio.to_thread(self.tts_kokoro.synthesize_arrays, text)
+            if result:
+                return ("array", result)
+            return None
         if self.tts_engine == "edge":
-            return await self._edge_tts_to_file(text)
+            path = await self._edge_tts_to_file(text)
+            if path:
+                return ("file", path)
         return None
 
-    async def _play_tts_file(self, path: str) -> bool:
-        """Play a synthesized temp file and delete it."""
-        if not path or self._interrupted:
+    async def _play_tts_payload(self, payload, *, pad_ms: int | None = None) -> bool:
+        if pad_ms is None:
+            pad_ms = self._tts_mid_pad_ms
+        """Play one synthesized payload and release any temp file."""
+        if not payload or self._interrupted:
             return False
+
+        kind, data = payload
         try:
-            return await self._play_audio_file(path)
+            if kind == "array":
+                samples, sr = data
+                return await self._play_audio_array(samples, sr, pad_ms=pad_ms)
+            if kind == "file":
+                return await self._play_audio_file(data, pad_ms=pad_ms)
         finally:
-            try:
-                os.unlink(path)
-            except Exception:
-                pass
+            if kind == "file":
+                try:
+                    os.unlink(data)
+                except Exception:
+                    pass
+        return False
 
     async def _play_tts_chunks(self, chunks: list[str]) -> None:
         """
         Play sentences with pipelined synthesis — chunk N+1 synthesises while
         chunk N plays so gaps between periods stay minimal.
         """
-        chunks = [c for c in chunks if c and c.strip()]
+        chunks = self._merge_tts_chunks(chunks)
         if not chunks or self._interrupted:
             return
 
-        pending = asyncio.create_task(self._synthesize_tts_file(chunks[0]))
+        pending = asyncio.create_task(self._synthesize_tts_payload(chunks[0]))
         any_played = False
 
         for i, text in enumerate(chunks):
@@ -612,23 +721,44 @@ class OllamaBackend:
                 break
 
             try:
-                path = await pending
+                payload = await pending
             except asyncio.CancelledError:
                 break
 
             if i + 1 < len(chunks):
-                pending = asyncio.create_task(self._synthesize_tts_file(chunks[i + 1]))
+                pending = asyncio.create_task(self._synthesize_tts_payload(chunks[i + 1]))
 
-            if not path:
+            if not payload:
                 engine = self.tts_engine or "none"
                 self.ui_logger(f"[Ollama] TTS: {engine} synthesis returned no audio.")
                 continue
 
-            if await self._play_tts_file(path):
+            pad_ms = self._tts_last_pad_ms if i == len(chunks) - 1 else self._tts_mid_pad_ms
+            if await self._play_tts_payload(payload, pad_ms=pad_ms):
                 any_played = True
 
         if not any_played and not self._interrupted:
             self.ui_logger("[Ollama] TTS: playback failed - check speaker in Settings.")
+
+    async def _run_tts_consumer(self, tts_q: asyncio.Queue) -> None:
+        """Background worker: play TTS while the LLM stream keeps producing text."""
+        while not self._interrupted:
+            item = await tts_q.get()
+            if item is _TTS_SENTINEL:
+                break
+
+            batch = [item]
+            while True:
+                try:
+                    nxt = tts_q.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                if nxt is _TTS_SENTINEL:
+                    await self._play_tts_chunks(batch)
+                    return
+                batch.append(nxt)
+
+            await self._play_tts_chunks(batch)
 
     async def _play_tts_chunk(self, text: str) -> None:
         """Synthesize and play one sentence/clause. Caller must hold _speak_lock."""
@@ -647,14 +777,20 @@ class OllamaBackend:
 
         full_content = ""
         buf = ""
+        buf_t0: float | None = None
         tool_calls: list = []
         spoke = False
         use_tts = bool(self.tts_engine) and not self._interrupted
         wait_logged = False
 
+        tts_q: asyncio.Queue | None = None
+        tts_task: asyncio.Task | None = None
+
         async with self._speak_lock:
             if use_tts:
                 self._set_speaking(True)
+                tts_q = asyncio.Queue()
+                tts_task = asyncio.create_task(self._run_tts_consumer(tts_q))
             try:
                 async for chunk in stream:
                     if self._interrupted:
@@ -667,16 +803,22 @@ class OllamaBackend:
                             wait_logged = True
                             if self._vad_debug:
                                 self.ui_logger("[Ollama] First token received.")
+                        if not buf:
+                            buf_t0 = time.monotonic()
                         full_content += delta
                         buf += delta
                         sentences, buf = self._extract_sentences(buf)
+                        if not sentences:
+                            sentences, buf, buf_t0 = self._try_timeout_flush(buf, buf_t0)
+                        else:
+                            buf_t0 = time.monotonic() if buf.strip() else None
                         if sentences:
-                            if use_tts:
-                                self.speak_callback(full_content)
-                                await self._play_tts_chunks(sentences)
+                            self.speak_callback(full_content)
+                            if use_tts and tts_q is not None:
+                                for sentence in sentences:
+                                    await tts_q.put(sentence)
                                 spoke = True
                             elif not spoke:
-                                self.speak_callback(full_content)
                                 spoke = True
 
                     tc = msg.get("tool_calls") or []
@@ -685,12 +827,25 @@ class OllamaBackend:
 
                 tool_calls = self._dedupe_tool_calls(tool_calls)
 
-                if buf.strip() and use_tts and not self._interrupted:
+                if buf.strip() and use_tts and tts_q is not None and not self._interrupted:
                     self.speak_callback(full_content)
-                    await self._play_tts_chunk(buf.strip())
+                    await tts_q.put(buf.strip())
                     spoke = True
+
+                if tts_q is not None:
+                    await tts_q.put(_TTS_SENTINEL)
+                if tts_task is not None:
+                    await tts_task
             except Exception as e:
                 self.ui_logger(f"[Ollama] Stream error: {e}")
+                if tts_q is not None:
+                    await tts_q.put(_TTS_SENTINEL)
+                if tts_task is not None:
+                    tts_task.cancel()
+                    try:
+                        await tts_task
+                    except asyncio.CancelledError:
+                        pass
                 raise
             finally:
                 if use_tts:
@@ -870,74 +1025,103 @@ class OllamaBackend:
             self.ui_logger(f"[Ollama] {err}")
             return err
 
-    async def _play_audio_file(self, path: str) -> bool:
-        """
-        Play a synthesized audio file (wav from Kokoro, mp3 from Edge) on the
-        user's chosen speaker, off the event loop so synthesis playback never
-        blocks the asyncio loop that drives the mic and Ollama.
+    async def _play_audio_array(
+        self,
+        data: np.ndarray,
+        sr: int,
+        *,
+        pad_ms: int | None = None,
+    ) -> bool:
+        if pad_ms is None:
+            pad_ms = self._tts_mid_pad_ms
+        """Play in-memory Kokoro audio without temp-file round trip."""
+        return await asyncio.to_thread(self._blocking_play_samples, data, sr, pad_ms)
 
-        Returns True if playback ran, False if it could not (caller then falls
-        back to text-only). Never raises. Honour interrupt via sd.stop().
-        """
-        def _blocking_play() -> bool:
+    async def _play_audio_file(
+        self,
+        path: str,
+        *,
+        pad_ms: int | None = None,
+    ) -> bool:
+        if pad_ms is None:
+            pad_ms = self._tts_last_pad_ms
+        """Play a synthesized audio file (mp3/wav). Never raises."""
+        def _load_and_play() -> bool:
             try:
-                import sounddevice as sd
                 import soundfile as sf
             except Exception as e:
                 self.ui_logger(f"[Ollama] TTS playback deps missing: {e}")
                 return False
-
             try:
                 data, sr = sf.read(path, dtype="float32")
             except Exception as e:
                 self.ui_logger(f"[Ollama] Could not decode TTS audio ({e}).")
                 return False
+            return self._blocking_play_samples(data, sr, pad_ms)
 
-            duration = len(data) / float(sr) if sr else 0.0
+        return await asyncio.to_thread(_load_and_play)
 
-            candidates = []
-            try:
-                from core import audio_devices
-                from memory.config_manager import get_output_device
-                _resolved = audio_devices.resolve(get_output_device(), "output")
-            except Exception:
-                _resolved = None
-            if _resolved is not None:
-                candidates.append(_resolved)
-            candidates.append(None)
+    def _blocking_play_samples(
+        self,
+        data: np.ndarray,
+        sr: int,
+        pad_ms: int,
+    ) -> bool:
+        """
+        Play float32 audio on the user's chosen speaker (blocking).
 
-            import time as _t
-            for dev in candidates:
-                if self._interrupted:
-                    return False
-                try:
-                    t0 = _t.monotonic()
-                    sd.play(data, sr, device=dev)
-                    sd.wait()
-                    took = _t.monotonic() - t0
-                    if self._interrupted:
-                        return False
-                    if duration > 0.3 and took < duration * 0.5:
-                        if self._vad_debug:
-                            self.ui_logger(
-                                f"[Ollama] TTS device={dev!r} looks silent "
-                                f"(played {took:.2f}s for {duration:.2f}s) — trying next."
-                            )
-                        continue
-                    if self._vad_debug:
-                        self.ui_logger(f"[Ollama] TTS played on device={dev!r} ({took:.2f}s).")
-                    return True
-                except Exception as e:
-                    if self._interrupted:
-                        return False
-                    if self._vad_debug:
-                        self.ui_logger(f"[Ollama] TTS device={dev!r} failed: {e}")
-                    continue
-
-            self.ui_logger("[Ollama] TTS: no working output device produced sound.")
+        Returns True if playback ran, False if it could not. Honour interrupt.
+        """
+        try:
+            import sounddevice as sd
+            from core.tts import _append_playback_tail
+        except Exception as e:
+            self.ui_logger(f"[Ollama] TTS playback deps missing: {e}")
             return False
 
-        return await asyncio.to_thread(_blocking_play)
+        data = _append_playback_tail(np.asarray(data, dtype=np.float32), sr, ms=pad_ms)
+        duration = len(data) / float(sr) if sr else 0.0
+
+        candidates = []
+        try:
+            from core import audio_devices
+            from memory.config_manager import get_output_device
+            _resolved = audio_devices.resolve(get_output_device(), "output")
+        except Exception:
+            _resolved = None
+        if _resolved is not None:
+            candidates.append(_resolved)
+        candidates.append(None)
+
+        for dev in candidates:
+            if self._interrupted:
+                return False
+            try:
+                t0 = time.monotonic()
+                sd.play(data, sr, device=dev)
+                sd.wait()
+                took = time.monotonic() - t0
+                if self._interrupted:
+                    return False
+                if duration > 0.3 and took < duration * 0.5:
+                    if self._vad_debug:
+                        self.ui_logger(
+                            f"[Ollama] TTS device={dev!r} looks silent "
+                            f"(played {took:.2f}s for {duration:.2f}s) — trying next."
+                        )
+                    continue
+                if self._vad_debug:
+                    self.ui_logger(f"[Ollama] TTS played on device={dev!r} ({took:.2f}s).")
+                return True
+            except Exception as e:
+                if self._interrupted:
+                    return False
+                if self._vad_debug:
+                    self.ui_logger(f"[Ollama] TTS device={dev!r} failed: {e}")
+                continue
+
+        self.ui_logger("[Ollama] TTS: no working output device produced sound.")
+        return False
 
     async def _synthesize_speech(self, text: str):
         """Convert text to speech and play it sentence-by-sentence."""
@@ -961,7 +1145,11 @@ class OllamaBackend:
                     sentences, buf = self._extract_sentences(buf)
                     if sentences:
                         await self._play_tts_chunks(sentences)
-                    if buf.strip() and len(buf) < _MAX_TTS_CHUNK and not _SENT_END.search(buf):
+                    if (
+                        buf.strip()
+                        and len(buf) < self._tts_max_chunk_chars
+                        and not _SENT_END.search(buf)
+                    ):
                         await self._play_tts_chunks([buf.strip()])
                         break
             except Exception as e:

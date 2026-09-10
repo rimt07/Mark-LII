@@ -31,7 +31,20 @@
       "model_path": null,
       "voices_path": null,
       "_voice_options": "Spanish: ef_dora (F), em_alex (M), em_santa (M). English: af_sarah, am_adam. Blended: 'af_sarah:60,am_adam:40'",
-      "_edge_voice_fallback": "es-MX-JorgeNeural"
+      "_edge_voice_fallback": "es-MX-JorgeNeural",
+      "flow": {
+        "_comment": "Conversational pacing for Kokoro/Edge \u00e2\u20ac\u201d tune without code changes",
+        "merge_max_chars": 400,
+        "max_chunk_chars": 400,
+        "clause_flush_chars": 100,
+        "flush_timeout_sec": 1.8,
+        "min_flush_chars": 40,
+        "max_pause_ms": 200,
+        "trailing_pause_ms": 60,
+        "mid_pad_ms": 45,
+        "last_pad_ms": 120,
+        "warmup_phrase": "Hola."
+      }
     }
   }
 }

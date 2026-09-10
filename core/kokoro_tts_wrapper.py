@@ -11,7 +11,7 @@ from typing import Optional, Callable
 
 import soundfile as sf
 
-from core.tts import _compress_silence, _to_numpy
+from core.tts import prepare_kokoro_audio, _to_numpy
 
 # kokoro-onnx 0.6.x has no get_languages(); map config aliases to espeak codes.
 _KOKORO_LANGS = frozenset({
@@ -64,7 +64,9 @@ class KokoroTTS:
         lang: str = "en-us",
         model_path: Optional[str] = None,
         voices_path: Optional[str] = None,
-        logger: Optional[Callable] = None
+        logger: Optional[Callable] = None,
+        max_pause_ms: int = 200,
+        trailing_pause_ms: int = 60,
     ):
         """
         Initialize Kokoro TTS engine.
@@ -81,6 +83,8 @@ class KokoroTTS:
         self.speed = speed
         self.lang = lang
         self.logger = logger or print
+        self.max_pause_ms = max_pause_ms
+        self.trailing_pause_ms = trailing_pause_ms
 
         # Default model paths
         base_dir = Path(__file__).parent.parent
@@ -147,6 +151,16 @@ class KokoroTTS:
             traceback.print_exc()
             return False
 
+    def warmup(self, phrase: str = "Hola.") -> None:
+        """Pre-compile synthesis path so the first real reply is faster."""
+        if not self._initialized:
+            return
+        try:
+            self.synthesize_arrays(phrase)
+            self.logger("[Kokoro] Warmup complete.")
+        except Exception as e:
+            self.logger(f"[Kokoro] Warmup warning: {e}")
+
     def _validate_voice(self, voice: str):
         """
         Validate voice selection and handle blending.
@@ -203,12 +217,12 @@ class KokoroTTS:
 
         return voice
 
-    def synthesize_sync(self, text: str, output_path: Optional[str] = None) -> Optional[str]:
+    def synthesize_arrays(self, text: str) -> tuple | None:
         """
-        Synthesize speech from text (blocking — run via asyncio.to_thread).
+        Synthesize speech in memory (blocking — run via asyncio.to_thread).
 
         Returns:
-            Path to generated audio file, or None on error
+            (float32 samples, sample_rate) or None on error
         """
         if not self._initialized:
             self.logger("[Kokoro] Not initialized")
@@ -221,19 +235,40 @@ class KokoroTTS:
                 speed=self.speed,
                 lang=self.lang,
             )
-            samples = _compress_silence(_to_numpy(samples), sample_rate)
+            samples = prepare_kokoro_audio(
+                _to_numpy(samples),
+                sample_rate,
+                max_pause_ms=self.max_pause_ms,
+                trailing_pause_ms=self.trailing_pause_ms,
+            )
+            return samples, sample_rate
+        except Exception as e:
+            self.logger(f"[Kokoro] Synthesis error: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
 
+    def synthesize_sync(self, text: str, output_path: Optional[str] = None) -> Optional[str]:
+        """
+        Synthesize speech from text (blocking — run via asyncio.to_thread).
+
+        Returns:
+            Path to generated audio file, or None on error
+        """
+        result = self.synthesize_arrays(text)
+        if not result:
+            return None
+
+        samples, sample_rate = result
+        try:
             if output_path is None:
                 fd, output_path = tempfile.mkstemp(suffix=".wav", prefix="kokoro_")
                 os.close(fd)
 
             sf.write(output_path, samples, sample_rate)
             return output_path
-
         except Exception as e:
-            self.logger(f"[Kokoro] Synthesis error: {e}")
-            import traceback
-            traceback.print_exc()
+            self.logger(f"[Kokoro] Write error: {e}")
             return None
 
     async def synthesize(self, text: str, output_path: Optional[str] = None) -> Optional[str]:

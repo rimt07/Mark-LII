@@ -89,7 +89,7 @@ from actions.proactive         import ProactiveEngine
 from actions.background_monitor import (
     add_monitor, remove_monitor, list_monitors, check_all as monitor_check_all,
 )
-from actions.web_search        import _news as _fetch_news_sync
+from actions.web_search        import _news_digest as _fetch_news_sync
 from memory.config_manager     import (
     get_brief_enabled, get_voice, get_input_device, get_output_device,
 )
@@ -1234,9 +1234,14 @@ class JarvisLive:
             elif name == "web_search":
                 r = await loop.run_in_executor(None, lambda: web_search_action(parameters=args, player=self.ui))
                 result = r or "Hecho."
-                # Mirror results to the on-screen content panel
+                # Mirror results to the on-screen content panel (news mode shows URLs there already)
                 _mode = args.get("mode", "search")
-                if r and not r.startswith("No se encontraron") and not r.startswith("Error en la búsqueda"):
+                if (
+                    _mode != "news"
+                    and r
+                    and not r.startswith("No se encontraron")
+                    and not r.startswith("Error en la búsqueda")
+                ):
                     _query = args.get("query") or ", ".join(args.get("items", []))
                     _label = f"{_mode.upper()} — {_query[:38]}" if _query else _mode.upper()
                     self.ui.show_content(_label, r)
@@ -1647,12 +1652,16 @@ class JarvisLive:
             await self._ollama_backend.speak(greet)
 
             loop = asyncio.get_event_loop()
-            news = await loop.run_in_executor(None, _fetch_news_sync, "noticias mundiales hoy")
-            if news and isinstance(news, str) and news.strip():
-                digest = news.strip()
-                if len(digest) > 600:
-                    digest = digest[:600].rsplit(" ", 1)[0] + "…"
-                await self._ollama_backend.speak(f"Estas son las principales noticias de hoy. {digest}")
+            news_spoken, news_display = await loop.run_in_executor(None, _fetch_news_sync)
+            if news_display and not news_display.startswith("No se encontraron noticias"):
+                self.ui.show_content("NOTICIAS — resumen del día", news_display)
+            if news_spoken and isinstance(news_spoken, str) and news_spoken.strip():
+                digest = news_spoken.strip()
+                if len(digest) > 1200:
+                    digest = digest[:1200].rsplit(" ", 1)[0] + "…"
+                await self._ollama_backend.speak(
+                    f"Estas son las principales noticias de hoy por tema. {digest}"
+                )
             self.ui.write_log("SYS: Ollama briefing complete.")
         except Exception as e:
             print(f"[Briefing/Ollama] {e}")
@@ -1678,7 +1687,7 @@ class JarvisLive:
 
         # Start fetching news immediately — runs in parallel while phase 1 plays
         loop = asyncio.get_event_loop()
-        news_future = loop.run_in_executor(None, _fetch_news_sync, "noticias mundiales hoy")
+        news_future = loop.run_in_executor(None, _fetch_news_sync)
 
         await asyncio.sleep(0.3)
         if not self.session:
@@ -1742,29 +1751,31 @@ class JarvisLive:
                     await asyncio.sleep(1.0)
 
                 try:
-                    news_text = await asyncio.wait_for(news_done, timeout=8.0)
+                    news_spoken, news_display = await asyncio.wait_for(news_done, timeout=20.0)
                 except Exception as e:
                     self.ui.write_log(f"SYS: News fetch timed out/failed: {e!r}")
-                    news_text = ""
+                    news_spoken, news_display = "", ""
 
                 if not self.session:
                     return
 
-                failed = (not news_text) or news_text.startswith(
+                failed = (not news_spoken) or news_spoken.startswith(
                     ("No se encontraron noticias", "Error en la búsqueda", "Indica qué")
                 )
                 if not failed:
-                    # Show on UI content panel immediately
-                    self.ui.show_content("NOTICIAS — noticias mundiales hoy", news_text)
+                    # Full list with URLs on screen/console only — not sent for vocalization
+                    self.ui.show_content("NOTICIAS — resumen del día", news_display)
 
                     p2 = (
-                        f"[BRIEFING] Estas son las principales noticias de hoy:\n{news_text}\n\n"
-                        "Elige UNA noticia, resúmela en una frase y di que la lista completa "
-                        f"está en pantalla. No llames herramientas.{lang_str}"
+                        f"[BRIEFING] Estas son las principales noticias de hoy por tema:\n{news_spoken}\n\n"
+                        "Menciona 3 o 4 titulares de distintas secciones (México, tecnología, IA, etc.), "
+                        "una frase corta por titular. Di que la lista completa con enlaces está en pantalla. "
+                        "NO leas ni digas URLs en voz alta. "
+                        f"No llames herramientas.{lang_str}"
                     )
                 else:
                     self.ui.write_log(
-                        f"SYS: News unavailable — backend returned: {news_text[:120]!r}"
+                        f"SYS: News unavailable — backend returned: {news_spoken[:120]!r}"
                     )
                     p2 = (
                         "No se pudieron obtener noticias en este momento. "

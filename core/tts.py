@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import os
 import queue as _queue
+import re
 import threading
 from typing import Callable, Optional
 
@@ -49,24 +50,38 @@ def _to_numpy(samples) -> np.ndarray:
     return np.asarray(samples, dtype=np.float32)
 
 
+def _frame_rms(chunk: np.ndarray) -> float:
+    return float(np.sqrt(np.mean(chunk ** 2) + 1e-12))
+
+
 def _compress_silence(
     arr: np.ndarray,
     sample_rate: int    = 24_000,
-    max_silence_ms: int = 500,    # cap punctuation pauses — keeps natural rhythm
+    max_silence_ms: int = 200,    # cap punctuation pauses — keeps natural rhythm
     threshold: float    = 0.003,  # RMS below this = silence; lower = less clipping
+    tail_preserve_ms: int = 40,   # protect last phoneme only — not trailing pause
 ) -> np.ndarray:
     """
-    Shorten Kokoro's very long punctuation pauses (1-2 s → ≤500 ms).
+    Shorten Kokoro's very long punctuation pauses (1-2 s → ≤200 ms).
     Conservative settings preserve natural prosody; only trims extreme pauses.
     """
+    arr = _to_numpy(arr)
+    if arr.size == 0:
+        return arr
+
+    tail_samp = int(tail_preserve_ms * sample_rate / 1000)
+    if len(arr) <= tail_samp:
+        return arr
+
+    body, tail = arr[:-tail_samp], arr[-tail_samp:]
     max_samp  = int(max_silence_ms * sample_rate / 1000)
     frame_len = 240                   # ~10 ms at 24 kHz
     out: list[np.ndarray] = []
     silent_acc = 0
 
-    for i in range(0, len(arr), frame_len):
-        chunk = arr[i : i + frame_len]
-        if np.sqrt(np.mean(chunk ** 2) + 1e-12) < threshold:
+    for i in range(0, len(body), frame_len):
+        chunk = body[i : i + frame_len]
+        if _frame_rms(chunk) < threshold:
             silent_acc += len(chunk)
             if silent_acc <= max_samp:
                 out.append(chunk)
@@ -74,14 +89,115 @@ def _compress_silence(
             silent_acc = 0
             out.append(chunk)
 
-    return np.concatenate(out) if out else arr
+    compressed = np.concatenate(out) if out else body
+    return np.concatenate([compressed, tail])
+
+
+def _trim_trailing_silence(
+    arr: np.ndarray,
+    sample_rate: int = 24_000,
+    keep_ms: int = 60,
+    threshold: float = 0.003,
+    frame_len: int = 240,
+) -> np.ndarray:
+    """Keep at most keep_ms of silence after the last voiced frame."""
+    arr = _to_numpy(arr)
+    if arr.size == 0:
+        return arr
+
+    last_voice = 0
+    for i in range(0, len(arr), frame_len):
+        chunk = arr[i : i + frame_len]
+        if _frame_rms(chunk) >= threshold:
+            last_voice = i + len(chunk)
+
+    keep = int(keep_ms * sample_rate / 1000)
+    return arr[: min(len(arr), last_voice + keep)]
+
+
+def _trim_leading_silence(
+    arr: np.ndarray,
+    sample_rate: int = 24_000,
+    max_ms: int = 25,
+    threshold: float = 0.003,
+    frame_len: int = 240,
+) -> np.ndarray:
+    """Skip leading silence so back-to-back chunks don't double-gap."""
+    arr = _to_numpy(arr)
+    if arr.size == 0:
+        return arr
+
+    max_skip = int(max_ms * sample_rate / 1000)
+    skipped = 0
+    for i in range(0, len(arr), frame_len):
+        chunk = arr[i : i + frame_len]
+        if _frame_rms(chunk) >= threshold:
+            return arr[i:]
+        skipped += len(chunk)
+        if skipped >= max_skip:
+            return arr[i:]
+    return arr
+
+
+def sanitize_for_tts(text: str) -> str:
+    """Strip markdown and other non-speech markup before synthesis."""
+    if not text:
+        return ""
+    t = str(text)
+    t = re.sub(r"```[\s\S]*?```", " ", t)
+    t = re.sub(r"`([^`]+)`", r"\1", t)
+    t = re.sub(r"\*\*([^*]+)\*\*", r"\1", t)
+    t = re.sub(r"\*([^*]+)\*", r"\1", t)
+    t = re.sub(r"__([^_]+)__", r"\1", t)
+    t = re.sub(r"_([^_]+)_", r"\1", t)
+    t = re.sub(r"^#+\s*", "", t, flags=re.MULTILINE)
+    t = re.sub(r"^\s*[-*+]\s+", "", t, flags=re.MULTILINE)
+    t = re.sub(r"^\s*\d+\.\s+", "", t, flags=re.MULTILINE)
+    t = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", t)
+    t = re.sub(r"https?://\S+", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+
+def prepare_kokoro_audio(
+    arr: np.ndarray,
+    sample_rate: int = 24_000,
+    max_pause_ms: int = 200,
+    trailing_pause_ms: int = 60,
+) -> np.ndarray:
+    """Normalize Kokoro output for conversational pacing."""
+    arr = _compress_silence(
+        arr,
+        sample_rate,
+        max_silence_ms=max_pause_ms,
+        tail_preserve_ms=40,
+    )
+    arr = _trim_trailing_silence(arr, sample_rate, keep_ms=trailing_pause_ms)
+    arr = _trim_leading_silence(arr, sample_rate, max_ms=25)
+    return arr
+
+
+def _append_playback_tail(
+    data: np.ndarray,
+    sample_rate: int,
+    ms: int = 350,
+) -> np.ndarray:
+    """Pad TTS output so Windows audio drivers finish the last phoneme before sd.wait() returns."""
+    data = _to_numpy(data)
+    if data.size == 0:
+        return data
+    pad_len = int(sample_rate * ms / 1000)
+    if data.ndim == 1:
+        return np.concatenate([data, np.zeros(pad_len, dtype=data.dtype)])
+    return np.concatenate([data, np.zeros((pad_len, data.shape[1]), dtype=data.dtype)], axis=0)
 
 
 def _play_np(samples, sample_rate: int) -> None:
     """Play float32 mono (or stereo) audio via sounddevice.
     Accepts numpy arrays or PyTorch tensors.
     """
-    sd.play(_to_numpy(samples), sample_rate)
+    data = _append_playback_tail(_to_numpy(samples), sample_rate)
+    sd.play(data, sample_rate)
     sd.wait()
 
 
@@ -93,7 +209,10 @@ def _play_audio_bytes(audio_bytes: bytes) -> None:
         output_format=miniaudio.SampleFormat.FLOAT32,
         nchannels=1,
     )
-    samples = np.array(decoded.samples, dtype=np.float32)
+    samples = _append_playback_tail(
+        np.array(decoded.samples, dtype=np.float32),
+        decoded.sample_rate,
+    )
     sd.play(samples, decoded.sample_rate)
     sd.wait()
 
@@ -326,7 +445,7 @@ class KokoroTTSEngine:
                 for _, _, audio in self._pipeline(text, voice=self.voice, speed=self.speed):
                     if audio is not None:
                         arr = _to_numpy(audio)
-                        arr = _compress_silence(arr)
+                        arr = prepare_kokoro_audio(arr)
                         if arr.size > 0:
                             audio_q.put(arr)          # blocks if player is slow (backpressure)
             except Exception as exc:
