@@ -17,6 +17,20 @@ for _stream in ("stdout", "stderr"):
     except Exception:
         pass          # pythonw / redirected pipes / anything exotic — never fatal
 
+# ── Rolling file log ─────────────────────────────────────────────────────────
+# Tee stdout + stderr into logs/jarvis.log (5 MB rolling, a few backups) so
+# every run — including windowless pythonw launches where stdout goes nowhere —
+# is captured for later inspection. Installed here, before any other output, so
+# nothing is missed. Failure is non-fatal (the app just runs without a log file).
+try:
+    from pathlib import Path as _Path
+    from core.file_logger import install_file_logging
+    _log_base = (_Path(_sys.executable).parent if getattr(_sys, "frozen", False)
+                 else _Path(__file__).resolve().parent)
+    install_file_logging(_log_base / "logs" / "jarvis.log")
+except Exception:
+    pass
+
 # ── Nuclear: force CREATE_NO_WINDOW on EVERY subprocess call on Windows ───────
 # This patches Popen itself, so no per-file flag is needed anywhere.
 if _platform.system() == "Windows":
@@ -953,6 +967,32 @@ class JarvisLive:
         self.ui.write_log(f"ERR: {tool_name} — {short}")
         self.speak(f"Sir, {tool_name} encountered an error. {short}")
 
+    def _build_tools(self) -> list[dict]:
+        """
+        Assemble the full tool-declaration list: core tools + enabled plugins +
+        connected MCP tools. This is the same set fed to Gemini via _build_config's
+        `function_declarations`, exposed as a standalone method so the Ollama
+        backend can reuse the exact same tools without duplicating the assembly.
+
+        MCP tools are read from the already-connected servers' cached tool lists
+        (never an async call from here). Any failure to gather MCP tools is logged
+        and degrades gracefully to the core + plugin tools.
+        """
+        _mcp_tools = []
+        try:
+            for server_id, conn in self._mcp_manager.servers.items():
+                if conn.is_connected():
+                    for tool in conn.get_tools():
+                        _mcp_tools.append(
+                            self._mcp_manager._convert_tool_to_gemini(server_id, tool)
+                        )
+            if _mcp_tools:
+                print(f"[MCP] Loaded {len(_mcp_tools)} tools for Ollama")
+        except Exception as e:
+            print(f"[MCP] Failed to get tools: {e}")
+
+        return TOOL_DECLARATIONS + self._plugin_registry.get_tool_declarations() + _mcp_tools
+
     def _build_config(self) -> types.LiveConnectConfig:
         from datetime import datetime
 
@@ -1000,25 +1040,15 @@ class JarvisLive:
 
         # Get MCP tools - use cached list from initialization
         # We can't call async methods from sync context (asyncio.run fails in running loop)
-        _mcp_tools = []
-        try:
-            # Get tools synchronously from already-connected servers
-            for server_id, conn in self._mcp_manager.servers.items():
-                if conn.is_connected():
-                    for tool in conn.get_tools():
-                        gemini_tool = self._mcp_manager._convert_tool_to_gemini(server_id, tool)
-                        _mcp_tools.append(gemini_tool)
-            if _mcp_tools:
-                print(f"[MCP] Loaded {len(_mcp_tools)} tools for Gemini")
-        except Exception as e:
-            print(f"[MCP] Failed to get tools: {e}")
+        # _build_tools() assembles core + plugin + MCP declarations in one place.
+        _all_tools = self._build_tools()
 
         cfg = dict(
             response_modalities=["AUDIO"],
             output_audio_transcription={},
             input_audio_transcription={},
             system_instruction="\n".join(parts),
-            tools=[{"function_declarations": TOOL_DECLARATIONS + self._plugin_registry.get_tool_declarations() + _mcp_tools}],
+            tools=[{"function_declarations": _all_tools}],
             # Hand back the handle captured from the last session_resumption
             # update. `handle=None` is exactly the old behaviour (ask for
             # handles, start fresh), so the first connect of a run is unchanged.
@@ -1876,8 +1906,19 @@ class JarvisLive:
         Ollama backend loop: captures audio from mic, processes through Ollama backend,
         handles text commands, and manages tool execution.
         """
-        # Start audio capture from microphone
-        input_device = get_input_device()
+        # Start audio capture from microphone.
+        # get_input_device() returns a NAME (e.g. "Micrófono (Yeti Nano)"), and
+        # on Windows that same mic appears once per host API (MME, DirectSound,
+        # WASAPI, WDM-KS). Passing the bare name to sounddevice matches all of
+        # them and raises "Multiple input devices found". Resolve it to a single
+        # index with the same measured, name-based resolver the Gemini path uses
+        # (which already picks the host API proven to actually capture audio).
+        _mic_name = get_input_device()
+        input_device = audio_devices.resolve(_mic_name, "input")
+        if _mic_name and input_device is not None:
+            print(f"[JARVIS] 🎤 Input device: {_mic_name} (index {input_device})")
+        elif _mic_name:
+            print(f"[JARVIS] 🎤 Input device '{_mic_name}' could not be resolved — using system default")
 
         def _audio_callback(indata, frames, time_info, status):
             """Callback from sounddevice capturing mic audio"""
@@ -1893,17 +1934,30 @@ class JarvisLive:
                     self._loop
                 )
 
-        # Open audio input stream
-        try:
-            stream = sd.InputStream(
+        # Open audio input stream. A chosen device that resolves but refuses to
+        # open (asleep, exclusive mode, wrong rate) must not kill the whole
+        # backend — fall back to the system default and say so.
+        def _open_mic(dev):
+            st = sd.InputStream(
                 samplerate=SEND_SAMPLE_RATE,
                 channels=CHANNELS,
                 dtype=np.int16,
                 blocksize=CHUNK_SIZE,
                 callback=_audio_callback,
-                device=input_device
+                device=dev,
             )
-            stream.start()
+            st.start()
+            return st
+
+        try:
+            try:
+                stream = _open_mic(input_device)
+            except Exception as _e:
+                if input_device is None:
+                    raise
+                print(f"[JARVIS] ⚠️  Mic '{_mic_name}' failed: {_e} — using default")
+                self.ui.write_log(f"SYS: Microphone '{_mic_name}' unavailable — using system default.")
+                stream = _open_mic(None)
             self.ui.write_log("SYS: Microphone active.")
         except Exception as e:
             self.ui.write_log(f"ERROR: Could not open audio input: {e}")
@@ -1978,7 +2032,21 @@ class JarvisLive:
             )
 
             if not success:
+                # Print to stdout too — the specific reason (model missing,
+                # Ollama not running, Whisper not installed, …) is written to
+                # the UI log by OllamaBackend.initialize(), but the console is
+                # where startup failures are actually watched.
+                print("[JARVIS] Ollama backend initialization failed — see the "
+                      "[Ollama] lines above for the reason.")
                 self.ui.write_log("ERROR: Ollama backend initialization failed. Check console.")
+                # Shut the MCP servers down HERE, on this task, before run()
+                # returns. If we just `return`, the event loop tears down and
+                # anyio garbage-collects the stdio_client from a different task,
+                # raising "Attempted to exit cancel scope in a different task".
+                try:
+                    await self._mcp_manager.shutdown()
+                except Exception as _e:
+                    print(f"[MCP] Shutdown after Ollama init failure: {_e}")
                 return
 
             await self._ollama_backend.start_session()
@@ -2000,7 +2068,15 @@ class JarvisLive:
             self.ui.set_state("LISTENING")
 
             # Ollama mode: simplified loop (no Gemini session management)
-            await self._run_ollama_mode()
+            try:
+                await self._run_ollama_mode()
+            finally:
+                # Same reason as the init-failure path: close MCP on THIS task
+                # so anyio never tears the stdio_client down from another task.
+                try:
+                    await self._mcp_manager.shutdown()
+                except Exception as _e:
+                    print(f"[MCP] Shutdown after Ollama loop: {_e}")
             return
 
         # Start dashboard (optional — needs: pip install fastapi "uvicorn[standard]" cryptography)

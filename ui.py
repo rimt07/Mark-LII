@@ -4099,8 +4099,21 @@ class MainWindow(QMainWindow):
                 else:
                     pythonw = Path(sys.executable).parent / "pythonw.exe"
                     exe = str(pythonw if pythonw.exists() else sys.executable)
-                    winreg.SetValueEx(reg, "JARVIS_AI", 0, winreg.REG_SZ,
-                                      f'"{exe}" "{script}"')
+                    workdir = str(Path(script).parent)
+                    # The Run key executes this string directly via CreateProcess
+                    # (NOT through a shell), so it must be a single self-contained
+                    # command. Unlike the desktop .lnk, a Run entry cannot carry a
+                    # separate "start in" directory, so the working directory would
+                    # default to system32 and break every relative-path operation
+                    # (file actions, fs_ MCP calls with path="main.py", etc.).
+                    # Wrap in `cmd /c` to cd into the project dir first; pythonw.exe
+                    # is windowless, and cmd /c exits immediately, so no console
+                    # window ever appears. Inner quotes are doubled per cmd rules.
+                    cmd = (
+                        f'cmd /c "cd /d ""{workdir}"" '
+                        f'&& start "" ""{exe}"" ""{script}"""'
+                    )
+                    winreg.SetValueEx(reg, "JARVIS_AI", 0, winreg.REG_SZ, cmd)
                 winreg.CloseKey(reg)
             elif _OS == "Darwin":
                 plist_dir = Path.home() / "Library" / "LaunchAgents"

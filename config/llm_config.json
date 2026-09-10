@@ -1,12 +1,12 @@
 {
   "_comment": "LLM Backend Configuration - Choose between Gemini Live or Ollama",
-  "backend": "gemini",
+  "backend": "ollama",
   "gemini": {
     "model": "models/gemini-2.5-flash-native-audio-preview-12-2025",
     "api_version": "v1alpha"
   },
   "ollama": {
-    "enabled": false,
+    "enabled": true,
     "base_url": "http://localhost:11434",
     "model": "llama3.2:latest",
     "temperature": 0.7,
@@ -14,18 +14,22 @@
     "stt": {
       "engine": "whisper",
       "model": "base",
-      "language": "auto"
+      "language": "auto",
+      "vad_threshold": 0.01,
+      "silence_chunks": 12,
+      "min_speech_chunks": 5,
+      "debug": true
     },
     "tts": {
       "_comment": "TTS Engine Options: 'kokoro' (fully offline, best quality), 'edge' (requires internet), or 'none'",
-      "engine": "kokoro",
-      "voice": "af_sarah",
+      "engine": "edge",
+      "voice": "em_alex",
       "speed": 1.0,
-      "lang": "en-us",
+      "lang": "es-MX",
       "model_path": null,
       "voices_path": null,
       "_voice_options": "Single voice: af_sarah, am_adam, bf_emma, bm_george, etc. Blended: 'af_sarah:60,am_adam:40' for 60-40 mix",
-      "_edge_voice_fallback": "en-US-AriaNeural"
+      "_edge_voice_fallback": "es-MX-JorgeNeural"
     }
   }
 }

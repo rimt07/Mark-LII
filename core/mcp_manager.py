@@ -158,14 +158,27 @@ class MCPServerConnection:
         try:
             self.logger(f"[MCP] Disconnecting from '{self.server_id}'...")
 
-            # Exit client session
+            # Exit client session and stdio context. Each __aexit__ is isolated:
+            # the MCP SDK's stdio_client wraps an anyio task group, and anyio
+            # forbids exiting a cancel scope in a different task than it was
+            # entered in. Depending on which task drives this teardown, __aexit__
+            # can raise RuntimeError ("cancel scope in a different task") or
+            # GeneratorExit. Neither means the subprocess survived — the child
+            # dies with the parent regardless — so we log and swallow them rather
+            # than let a cosmetic teardown error crash shutdown.
             if self._client:
-                await self._client.__aexit__(None, None, None)
+                try:
+                    await self._client.__aexit__(None, None, None)
+                except (RuntimeError, GeneratorExit) as e:
+                    self.logger(f"[MCP] Ignoring benign session teardown error: {e}")
                 self._client = None
 
             # Exit stdio context (kills subprocess)
             if self._context:
-                await self._context.__aexit__(None, None, None)
+                try:
+                    await self._context.__aexit__(None, None, None)
+                except (RuntimeError, GeneratorExit) as e:
+                    self.logger(f"[MCP] Ignoring benign stdio teardown error: {e}")
                 self._context = None
 
             self._connected = False
