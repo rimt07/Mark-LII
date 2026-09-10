@@ -18,20 +18,29 @@
 		"shell-mcp-server": {
 			"name": "MCP Shell Server",
 			"description": "Servidor mcp para interactuar con la terminal o shell",
-			"enabled": true,
-			"transport": "stdio",
-			"command": "C:/Users/rimt_/.local/bin/uvx.exe",
+			"command": "uvx",
 			"args": [
-				"--with",
-				"mcp[cli]>=1.29,<2",
 				"mcp-server-for-powershell",
 				"--language-mode",
 				"1",
 				"--cwd",
 				"d:/programacion/"
 			],
+			"health_check_interval": 60,
+			"enabled": true,
 			"restart_on_failure": true,
-			"health_check_interval": 60
+			"transport": "stdio"
+		},
+		"atlassian": {
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx -y mcp-remote https://mcp.atlassian.com/v1/sse"
+			],
+			"health_check_interval": 60,
+			"enabled": true,
+			"restart_on_failure": true,
+			"transport": "stdio"
 		}
 	},
 	"settings": {
