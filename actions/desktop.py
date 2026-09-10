@@ -103,8 +103,7 @@ def _execute_generated_code(code: str, player=None) -> str:
 
 def _ask_gemini_for_desktop_action(task: str) -> str:
 
-    from google import genai as _genai
-    _client = _genai.Client(api_key=_get_api_key())
+    from core.local_llm import generate_text
 
     desktop = str(_get_desktop())
 
@@ -142,8 +141,7 @@ Output ONLY the Python code. No explanation, no markdown, no backticks.
 Task: {task}"""
 
     try:
-        response = _client.models.generate_content(model="gemini-flash-latest", contents=prompt)
-        code = response.text.strip()
+        code = generate_text(prompt).strip()
         if code.startswith("```"):
             lines = code.split("\n")
             code  = "\n".join(lines[1:-1]).strip()

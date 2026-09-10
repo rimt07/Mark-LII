@@ -28,18 +28,8 @@ def _get_api_key() -> str:
 
 
 def _generate(model_name: str, prompt: str, system: str = "") -> str:
-    from google import genai
-    from google.genai import types
-    client = genai.Client(api_key=_get_api_key())
-    config = types.GenerateContentConfig(
-        system_instruction=system if system else None
-    )
-    response = client.models.generate_content(
-        model=model_name,
-        contents=prompt,
-        config=config if system else None,
-    )
-    return response.text
+    from core.local_llm import generate_text
+    return generate_text(prompt, system=system or None, model=model_name)
 
 
 def _run_generated_code(description: str, speak: Callable | None = None) -> str:

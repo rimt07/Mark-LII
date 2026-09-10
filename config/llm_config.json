@@ -9,6 +9,7 @@
     "enabled": true,
     "base_url": "http://localhost:11434",
     "model": "llama3.2:latest",
+    "vision_model": "llava:latest",
     "temperature": 0.7,
     "stream": true,
     "stt": {

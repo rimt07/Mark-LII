@@ -32,14 +32,8 @@ def _get_api_key() -> str:
 
 
 def _gemini_client():
-    from google import genai
-    _c = genai.Client(api_key=_get_api_key())
-
-    class _W:
-        def generate_content(self, contents):
-            return _c.models.generate_content(model="gemini-flash-latest", contents=contents)
-
-    return _W()
+    from core.local_llm import get_model
+    return get_model("gemini-flash-latest")
 
 
 def _detect_type(path: Path) -> str:

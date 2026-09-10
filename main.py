@@ -823,12 +823,24 @@ class JarvisLive:
         Thread-safe speech channel for plugins: lets a plugin ask JARVIS to
         say something short WHILE its run() is still executing (plugins block
         their executor thread, so they can't speak through the tool response
-        until they finish). The instruction is injected into the Live session
-        exactly like a proactive check-in; Gemini phrases it naturally in the
-        user's language. Silently a no-op when no session is connected.
+        until they finish). On Gemini the instruction is injected into the Live
+        session; on Ollama it is spoken via the local TTS engine.
         """
         loop = getattr(self, "_loop", None)
-        if not loop or not self.session:
+        if not loop:
+            return
+
+        if self._backend_type == "ollama" and self._ollama_backend:
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    self._ollama_backend.speak(instruction),
+                    loop,
+                )
+            except Exception as e:
+                print(f"[PluginSay] {e}")
+            return
+
+        if not self.session:
             return
 
         async def _say():
@@ -935,6 +947,12 @@ class JarvisLive:
     def interrupt(self) -> None:
         """Stop JARVIS mid-speech: drain queued audio and open mic immediately."""
         self._interrupted = True
+        if self._backend_type == "ollama" and self._ollama_backend:
+            self._ollama_backend.interrupt()
+            self.set_speaking(False)
+            self.ui.write_log("SYS: Interrupted — listening...")
+            return
+
         q = self.audio_in_queue
         if q:
             drained = 0
@@ -952,7 +970,15 @@ class JarvisLive:
         self.ui.write_log("SYS: Interrupted — listening...")
 
     def speak(self, text: str):
-        if not self._loop or not self.session:
+        if not self._loop:
+            return
+        if self._backend_type == "ollama" and self._ollama_backend:
+            asyncio.run_coroutine_threadsafe(
+                self._ollama_backend.speak(text),
+                self._loop,
+            )
+            return
+        if not self.session:
             return
         asyncio.run_coroutine_threadsafe(
             self.session.send_client_content(
@@ -1168,13 +1194,25 @@ class JarvisLive:
                         img_b, mime_t = await loop.run_in_executor(None, _capture_screen)
                         print(f"[Vision] 🖥️  Screen: {len(img_b):,} bytes")
                         _stall = "screen"
-                    self._pending_vision = (img_b, mime_t, user_text, angle)
-                    result = (
-                        f"[VISION_ACTIVE] {_stall.capitalize()} captured. "
-                        f"Immediately say ONE short natural sentence in the user's own language, "
-                        f"telling them you are looking at their {_stall} right now. "
-                        f"Do NOT describe or guess content — the actual image arrives in the NEXT message."
-                    )
+
+                    # Ollama has no Gemini Live image-injection loop — analyse now.
+                    if self._backend_type == "ollama" and self._ollama_backend:
+                        try:
+                            result = await self._ollama_backend.analyze_image(
+                                img_b, user_text, mime=mime_t, speak_result=False
+                            )
+                        except Exception as e:
+                            result = f"Vision analysis failed: {e}"
+                        finally:
+                            self._vision_busy = False
+                    else:
+                        self._pending_vision = (img_b, mime_t, user_text, angle)
+                        result = (
+                            f"[VISION_ACTIVE] {_stall.capitalize()} captured. "
+                            f"Immediately say ONE short natural sentence in the user's own language, "
+                            f"telling them you are looking at their {_stall} right now. "
+                            f"Do NOT describe or guess content — the actual image arrives in the NEXT message."
+                        )
 
             elif name == "close_camera":
                 self.ui.stop_camera_stream()
@@ -1247,7 +1285,12 @@ class JarvisLive:
                 self.ui.write_log("SYS: Shutdown requested.")
                 async def _do_shutdown():
                     await self._save_session_summary()
-                    if self.session:
+                    if self._backend_type == "ollama" and self._ollama_backend:
+                        try:
+                            await self._ollama_backend.speak("Goodbye.")
+                        except Exception:
+                            pass
+                    elif self.session:
                         try:
                             await self.session.send_client_content(
                                 turns={"parts": [{"text": "Say a brief natural goodbye to the user."}]},
@@ -1582,6 +1625,38 @@ class JarvisLive:
 
     # ── Morning briefing ────────────────────────────────────────────────────────
 
+    async def _send_ollama_startup_briefing(self) -> None:
+        """
+        Ollama-mode startup greeting + news digest spoken via local TTS.
+        Avoids Gemini Live session.send_client_content.
+        """
+        if not self._ollama_backend:
+            return
+        try:
+            await asyncio.sleep(0.8)
+            memory = load_memory()
+            identity = memory.get("identity", {})
+
+            def _val(k: str) -> str:
+                e = identity.get(k, {})
+                return (e.get("value", "") if isinstance(e, dict) else str(e)).strip()
+
+            name = _val("name")
+            time_str = datetime.now().strftime("%H:%M")
+            greet = f"Good day{', ' + name if name else ''}. It is {time_str}. Fetching today's headlines."
+            await self._ollama_backend.speak(greet)
+
+            loop = asyncio.get_event_loop()
+            news = await loop.run_in_executor(None, _fetch_news_sync, "top world news today")
+            if news and isinstance(news, str) and news.strip():
+                digest = news.strip()
+                if len(digest) > 600:
+                    digest = digest[:600].rsplit(" ", 1)[0] + "…"
+                await self._ollama_backend.speak(f"Here are today's top headlines. {digest}")
+            self.ui.write_log("SYS: Ollama briefing complete.")
+        except Exception as e:
+            print(f"[Briefing/Ollama] {e}")
+
     async def _send_startup_briefing(self) -> None:
         """
         Two-phase briefing optimized for speed:
@@ -1880,6 +1955,10 @@ class JarvisLive:
                 )
                 if not text:
                     continue
+                if self._backend_type == "ollama" and self._ollama_backend:
+                    await self._ollama_backend.send_text(text)
+                    self.ui.write_log(f"[Web]: {text}")
+                    continue
                 # Wait up to 8s for session to become ready after a wake
                 for _ in range(80):
                     if self.session:
@@ -1925,14 +2004,19 @@ class JarvisLive:
             if status:
                 print(f"[Audio] {status}")
 
-            # Send audio to Ollama backend for processing
-            if not self.ui.muted and self._ollama_backend:
-                audio_bytes = indata.tobytes()
-                # Schedule coroutine on event loop
-                asyncio.run_coroutine_threadsafe(
-                    self._ollama_backend.process_audio_chunk(audio_bytes),
-                    self._loop
-                )
+            # Skip while muted or while the assistant is speaking / busy.
+            with self._speaking_lock:
+                speaking = self._is_speaking
+            if speaking or self.ui.muted or not self._ollama_backend:
+                return
+            if getattr(self._ollama_backend, "is_busy", False):
+                return
+
+            audio_bytes = indata.tobytes()
+            asyncio.run_coroutine_threadsafe(
+                self._ollama_backend.process_audio_chunk(audio_bytes),
+                self._loop
+            )
 
         # Open audio input stream. A chosen device that resolves but refuses to
         # open (asleep, exclusive mode, wrong rate) must not kill the whole
@@ -2015,14 +2099,50 @@ class JarvisLive:
             self._ollama_backend = OllamaBackend(
                 config=ollama_config,
                 ui_logger=self.ui.write_log,
-                speak_callback=lambda text: self.ui.write_log(f"JARVIS: {text}")
+                speak_callback=lambda text: self.ui.write_log(f"JARVIS: {text}"),
+                speaking_callback=self.set_speaking,
             )
 
-            # Build tools for Ollama
+            # Same identity/time/memory assembly Gemini gets in _build_config.
+            try:
+                _cfg = json.loads(open(API_CONFIG_PATH, encoding="utf-8").read())
+                self._asst_name = (_cfg.get("assistant_name") or "JARVIS").strip()
+                _user_name = (_cfg.get("user_name") or "").strip()
+            except Exception:
+                self._asst_name = "JARVIS"
+                _user_name = ""
+
+            now = datetime.now()
+            time_str = now.strftime("%A, %B %d, %Y — %I:%M %p")
+            time_ctx = (
+                f"[CURRENT DATE & TIME]\n"
+                f"Right now it is: {time_str}\n"
+                f"Use this to calculate exact times for reminders.\n\n"
+            )
+            _addr = (
+                f"ADDRESS: Always call the user '{_user_name}'."
+                if _user_name
+                else "ADDRESS: Address the user with the ordinary respectful form "
+                     "for a superior in the language you are currently speaking — "
+                     "\"sir\" in English, its everyday equivalent in any other "
+                     "language. Never an archaic or aristocratic form, and never "
+                     "the form from a different language than the one you are "
+                     "speaking in this sentence."
+            )
+            identity_ctx = (
+                f"[IDENTITY]\n"
+                f"Your name is {self._asst_name}. "
+                f"Always refer to yourself as {self._asst_name}.\n"
+                f"{_addr}\n\n"
+            )
             system_prompt = _load_system_prompt()
             memory = load_memory()
             memory_str = format_memory_for_prompt(memory)
-            full_prompt = f"{system_prompt}\n\n{memory_str}"
+            parts = [time_ctx, identity_ctx]
+            if memory_str:
+                parts.append(memory_str)
+            parts.append(system_prompt)
+            full_prompt = "\n".join(parts)
             tools = self._build_tools()  # Reuse existing tool definitions
 
             success = await self._ollama_backend.initialize(
@@ -2066,6 +2186,19 @@ class JarvisLive:
             self.ui.update_offline_mode(is_fully_offline)
 
             self.ui.set_state("LISTENING")
+
+            # Phone dashboard + command relay (same as Gemini path).
+            try:
+                from dashboard.server import DashboardServer
+                self._dashboard = DashboardServer()
+                self._dashboard.set_connect_callback(self._on_phone_connected)
+                asyncio.create_task(self._dashboard.serve())
+                asyncio.create_task(self._process_dashboard_commands())
+            except Exception as e:
+                print(f"[Dashboard] Not started in Ollama mode: {e}")
+
+            # Lightweight startup briefing (DDG news → TTS), no Gemini session.
+            asyncio.create_task(self._send_ollama_startup_briefing())
 
             # Ollama mode: simplified loop (no Gemini session management)
             try:

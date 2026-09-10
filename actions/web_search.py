@@ -79,6 +79,10 @@ def _get_api_key() -> str:
 
 
 def _gemini_search(query: str) -> str:
+    from core.local_llm import is_ollama_backend
+    if is_ollama_backend():
+        raise RuntimeError("Gemini grounding skipped — Ollama backend active")
+
     if not _gemini_available():
         raise _QuotaCooldown("Gemini grounding is in quota cooldown")
 
@@ -203,8 +207,14 @@ def _gemini_headlines(n: int = 5) -> tuple[list[str], str]:
     Fetches current headlines via Gemini grounded search.
     Optimised for speed: minimal prompt + strict token cap.
     Returns (headline_list, raw_text_for_display).
+    On Ollama backend, returns empty so callers fall through to DDG.
     """
     import re
+    from core.local_llm import is_ollama_backend
+
+    if is_ollama_backend():
+        return [], ""
+
     from google import genai
 
     client = genai.Client(api_key=_get_api_key())

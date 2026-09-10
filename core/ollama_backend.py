@@ -1,18 +1,17 @@
 """
 Ollama Backend for MARK LII
 
-Local LLM backend using Ollama + Whisper STT + Piper TTS.
+Local LLM backend using Ollama + Whisper STT + Kokoro/Edge TTS.
 Provides voice-to-voice interaction without cloud dependencies.
 """
 import asyncio
+import base64
 import json
 import os
 import tempfile
-import threading
 import time
 import wave
-from pathlib import Path
-from typing import Optional, Callable, List, Dict, Any
+from typing import Callable, List, Dict, Any
 
 import numpy as np
 
@@ -22,13 +21,21 @@ class OllamaBackend:
     Local voice assistant backend using:
     - Ollama for LLM inference
     - Whisper for speech-to-text
-    - Piper/edge-tts for text-to-speech
+    - Kokoro ONNX or Edge TTS for text-to-speech
     """
 
-    def __init__(self, config: dict, ui_logger: Callable, speak_callback: Callable):
+    def __init__(
+        self,
+        config: dict,
+        ui_logger: Callable,
+        speak_callback: Callable,
+        speaking_callback: Callable | None = None,
+    ):
         self.config = config
         self.ui_logger = ui_logger
         self.speak_callback = speak_callback
+        # Optional: notify the host UI when TTS starts/stops (for mute/HUD).
+        self.speaking_callback = speaking_callback
 
         # Audio processing
         self.sample_rate = 16000
@@ -54,6 +61,8 @@ class OllamaBackend:
         self.ollama_client = None
         self.ollama_base_url = config.get("base_url", "http://localhost:11434")
         self.ollama_model = config.get("model", "llama3.2:latest")
+        self.temperature = float(config.get("temperature", 0.7))
+        self.vision_model = (config.get("vision_model") or "").strip() or None
 
         # STT/TTS engines
         self.stt_engine = None
@@ -70,6 +79,10 @@ class OllamaBackend:
 
         self._initialized = False
         self._running = False
+        self._busy = False          # True while STT/LLM/TTS turn is in flight
+        self._is_speaking = False
+        self._interrupted = False
+        self._speak_lock = asyncio.Lock()
 
     async def initialize(self, system_prompt: str, tools: List[dict], tool_executor: Callable):
         """Initialize Ollama backend and load models"""
@@ -259,6 +272,35 @@ class OllamaBackend:
         self._running = False
         self.ui_logger("[Ollama] Session stopped")
 
+    def interrupt(self) -> None:
+        """Stop TTS mid-playback and discard the current mic utterance."""
+        self._interrupted = True
+        self._reset_vad(keep_buffer=False)
+        try:
+            import sounddevice as sd
+            sd.stop()
+        except Exception:
+            pass
+        if self._is_speaking:
+            self._set_speaking(False)
+        self.ui_logger("[Ollama] Interrupted — listening...")
+
+    def _set_speaking(self, value: bool) -> None:
+        self._is_speaking = value
+        if self.speaking_callback:
+            try:
+                self.speaking_callback(value)
+            except Exception:
+                pass
+
+    @property
+    def is_speaking(self) -> bool:
+        return self._is_speaking
+
+    @property
+    def is_busy(self) -> bool:
+        return self._busy or self._is_speaking
+
     async def process_audio_chunk(self, audio_data: bytes):
         """
         Process incoming audio chunk.
@@ -268,6 +310,9 @@ class OllamaBackend:
         trigger a transcription of nothing.
         """
         if not self._running:
+            return
+        # Ignore mic while the assistant is thinking or speaking (no AEC).
+        if self._busy or self._is_speaking:
             return
 
         # Convert bytes to numpy array
@@ -324,6 +369,8 @@ class OllamaBackend:
         if not self.audio_buffer:
             return
 
+        self._busy = True
+        self._interrupted = False
         try:
             self.ui_logger("[Ollama] Transcribing audio...")
 
@@ -395,6 +442,8 @@ class OllamaBackend:
             self.ui_logger(f"[Ollama] Transcription error: {e}")
             import traceback
             traceback.print_exc()
+        finally:
+            self._busy = False
 
     # ── Function calling ─────────────────────────────────────────────────────
     @staticmethod
@@ -494,7 +543,13 @@ class OllamaBackend:
             response_text = ""
 
             for _round in range(max_tool_rounds + 1):
-                kwargs = dict(model=self.ollama_model, messages=self.messages)
+                if self._interrupted:
+                    return
+                kwargs = dict(
+                    model=self.ollama_model,
+                    messages=self.messages,
+                    options={"temperature": self.temperature},
+                )
                 if use_tools:
                     kwargs["tools"] = self.ollama_tools
 
@@ -571,40 +626,11 @@ class OllamaBackend:
             if not response_text:
                 return
 
-            self.ui_logger(f"[Ollama] Assistant: {response_text}")
-
-            # Synthesize speech
-            await self._synthesize_speech(response_text)
-
-        except Exception as e:
-            self.ui_logger(f"[Ollama] Generation error: {e}")
-            import traceback
-            traceback.print_exc()
-
-    async def _generate_response_OLD(self):
-        """Generate response from Ollama"""
-        try:
-            self.ui_logger("[Ollama] Generating response...")
-
-            # Call Ollama with streaming
-            response_text = ""
-            async for chunk in await self.ollama_client.chat(
-                model=self.ollama_model,
-                messages=self.messages,
-                stream=True,
-            ):
-                content = chunk.get('message', {}).get('content', '')
-                response_text += content
-                # Could stream to UI here if desired
-
-            if not response_text:
+            if self._interrupted:
                 return
 
             self.ui_logger(f"[Ollama] Assistant: {response_text}")
 
-            # Add to conversation history
-            self.messages.append({"role": "assistant", "content": response_text})
-
             # Synthesize speech
             await self._synthesize_speech(response_text)
 
@@ -612,6 +638,53 @@ class OllamaBackend:
             self.ui_logger(f"[Ollama] Generation error: {e}")
             import traceback
             traceback.print_exc()
+
+    async def analyze_image(
+        self,
+        image_bytes: bytes,
+        question: str,
+        *,
+        mime: str = "image/jpeg",
+        speak_result: bool = True,
+    ) -> str:
+        """
+        Multimodal follow-up for screen_process / camera. Uses vision_model
+        when configured, otherwise the chat model (must support images).
+        """
+        model = self.vision_model or self.ollama_model
+        prompt = (question or "What do you see?").strip()
+        b64 = base64.b64encode(image_bytes).decode("ascii")
+        self.ui_logger(f"[Ollama] Vision via '{model}'…")
+        try:
+            resp = await self.ollama_client.chat(
+                model=model,
+                messages=[{
+                    "role": "user",
+                    "content": prompt,
+                    "images": [b64],
+                }],
+                options={"temperature": self.temperature},
+            )
+            msg = resp.get("message", {}) if isinstance(resp, dict) else getattr(resp, "message", {})
+            if not isinstance(msg, dict):
+                text = (getattr(msg, "content", "") or "").strip()
+            else:
+                text = (msg.get("content") or "").strip()
+            if not text:
+                text = "I could not analyse that image."
+            self.messages.append({"role": "user", "content": f"[Vision] {prompt}"})
+            self.messages.append({"role": "assistant", "content": text})
+            if speak_result and not self._interrupted:
+                await self._synthesize_speech(text)
+            return text
+        except Exception as e:
+            err = (
+                f"Vision failed with model '{model}': {e}. "
+                f"Pull a multimodal model (e.g. ollama pull llava) and set "
+                f"ollama.vision_model in config/llm_config.json."
+            )
+            self.ui_logger(f"[Ollama] {err}")
+            return err
 
     async def _play_audio_file(self, path: str) -> bool:
         """
@@ -620,7 +693,7 @@ class OllamaBackend:
         blocks the asyncio loop that drives the mic and Ollama.
 
         Returns True if playback ran, False if it could not (caller then falls
-        back to text-only). Never raises.
+        back to text-only). Never raises. Honour interrupt via sd.stop().
         """
         def _blocking_play() -> bool:
             try:
@@ -638,14 +711,6 @@ class OllamaBackend:
 
             duration = len(data) / float(sr) if sr else 0.0
 
-            # Build the device try-order. The chosen speaker is tried first, but
-            # some Windows host APIs (notably PortAudio DirectSound output) report
-            # success while emitting NOTHING — sd.play + sd.wait return in ~0 ms
-            # for seconds of audio (the "silent sink" the startup probe warns
-            # about). So after each attempt we check that playback actually took
-            # roughly real time; if it returned far too fast, we treat the device
-            # as silent and fall through to the next candidate. The system
-            # default (device=None) was verified to play in real time.
             candidates = []
             try:
                 from core import audio_devices
@@ -655,17 +720,19 @@ class OllamaBackend:
                 _resolved = None
             if _resolved is not None:
                 candidates.append(_resolved)
-            candidates.append(None)  # system default — known-good real-time sink
+            candidates.append(None)
 
             import time as _t
             for dev in candidates:
+                if self._interrupted:
+                    return False
                 try:
                     t0 = _t.monotonic()
                     sd.play(data, sr, device=dev)
                     sd.wait()
                     took = _t.monotonic() - t0
-                    # Real playback consumes ~duration seconds. If it finished in
-                    # well under half that, no audio actually left the device.
+                    if self._interrupted:
+                        return False
                     if duration > 0.3 and took < duration * 0.5:
                         if self._vad_debug:
                             self.ui_logger(
@@ -677,6 +744,8 @@ class OllamaBackend:
                         self.ui_logger(f"[Ollama] TTS played on device={dev!r} ({took:.2f}s).")
                     return True
                 except Exception as e:
+                    if self._interrupted:
+                        return False
                     if self._vad_debug:
                         self.ui_logger(f"[Ollama] TTS device={dev!r} failed: {e}")
                     continue
@@ -688,55 +757,75 @@ class OllamaBackend:
 
     async def _synthesize_speech(self, text: str):
         """Convert text to speech and play it on the chosen speaker."""
-        if not self.tts_engine:
-            # No TTS - just display text
-            self.speak_callback(text)
+        if not text or not str(text).strip():
+            return
+        if self._interrupted:
             return
 
-        # Always surface the text in the UI regardless of playback outcome.
-        self.speak_callback(text)
+        async with self._speak_lock:
+            if self._interrupted:
+                return
+            if not self.tts_engine:
+                self.speak_callback(text)
+                return
 
-        try:
-            if self.tts_engine == "kokoro":
-                # Generate audio with Kokoro TTS (fully offline)
-                audio_path = await self.tts_kokoro.synthesize(text)
-                if audio_path:
+            self.speak_callback(text)
+            self._set_speaking(True)
+            try:
+                if self.tts_engine == "kokoro":
+                    audio_path = await self.tts_kokoro.synthesize(text)
+                    if audio_path and not self._interrupted:
+                        try:
+                            await self._play_audio_file(audio_path)
+                        finally:
+                            try:
+                                os.unlink(audio_path)
+                            except Exception:
+                                pass
+
+                elif self.tts_engine == "edge":
+                    import edge_tts
+
+                    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+                        tmp_path = tmp.name
                     try:
-                        await self._play_audio_file(audio_path)
+                        if not self._interrupted:
+                            communicate = edge_tts.Communicate(text, self.tts_voice)
+                            await communicate.save(tmp_path)
+                            if not self._interrupted:
+                                await self._play_audio_file(tmp_path)
                     finally:
                         try:
-                            os.unlink(audio_path)
+                            os.unlink(tmp_path)
                         except Exception:
                             pass
 
-            elif self.tts_engine == "edge":
-                import edge_tts
+            except Exception as e:
+                self.ui_logger(f"[Ollama] TTS error: {e}")
+            finally:
+                self._set_speaking(False)
 
-                # Generate audio with Edge TTS (requires internet)
-                with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
-                    tmp_path = tmp.name
-                try:
-                    communicate = edge_tts.Communicate(text, self.tts_voice)
-                    await communicate.save(tmp_path)
-                    await self._play_audio_file(tmp_path)
-                finally:
-                    try:
-                        os.unlink(tmp_path)
-                    except Exception:
-                        pass
-
-        except Exception as e:
-            self.ui_logger(f"[Ollama] TTS error: {e}")
+    async def speak(self, text: str) -> None:
+        """Public mid-turn speech channel (plugins, tool speak=, errors)."""
+        self._interrupted = False
+        await self._synthesize_speech(text)
 
     async def send_text(self, text: str):
         """Send text message directly (for text input)"""
-        self.messages.append({"role": "user", "content": text})
-        await self._generate_response()
+        self._busy = True
+        self._interrupted = False
+        try:
+            self.messages.append({"role": "user", "content": text})
+            await self._generate_response()
+        finally:
+            self._busy = False
 
     async def execute_tool(self, tool_name: str, parameters: dict) -> str:
         """Execute a tool and return result"""
         if self.tool_executor:
-            return await self.tool_executor(tool_name, parameters)
+            fc = self._FnCall(tool_name, parameters, f"ollama-manual-{tool_name}")
+            fn_response = await self.tool_executor(fc)
+            return self._extract_result_text(fn_response)
         return "Tool execution not configured"
 
     def reset_conversation(self):
