@@ -54,29 +54,29 @@ def _resolve_save_path(output_path: str, language: str) -> Path:
 
 def _read_file(file_path: str) -> tuple[str, str]:
     if not file_path:
-        return "", "No file path provided."
+        return "", "No se proporcionó la ruta del archivo."
     p = Path(file_path)
     if not p.exists():
-        return "", f"File not found: {file_path}"
+        return "", f"Archivo no encontrado: {file_path}"
     try:
         return p.read_text(encoding="utf-8"), ""
     except Exception as e:
-        return "", f"Could not read file: {e}"
+        return "", f"No se pudo leer el archivo: {e}"
 
 
 def _save_file(path: Path, content: str) -> str:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
-        return f"Saved to: {path}"
+        return f"Guardado en: {path}"
     except Exception as e:
-        return f"Could not save: {e}"
+        return f"No se pudo guardar: {e}"
 
 
 def _preview(code: str, lines: int = 10) -> str:
     all_lines = code.splitlines()
     preview   = "\n".join(all_lines[:lines])
-    suffix    = f"\n... ({len(all_lines) - lines} more lines)" if len(all_lines) > lines else ""
+    suffix    = f"\n... ({len(all_lines) - lines} líneas más)" if len(all_lines) > lines else ""
     return preview + suffix
 
 
@@ -209,7 +209,7 @@ def _run_file(path: Path, args: list, timeout: int) -> str:
     }
     interp = interpreters.get(path.suffix.lower())
     if not interp:
-        return f"No interpreter for {path.suffix}."
+        return f"No hay intérprete para {path.suffix}."
 
     try:
         result = subprocess.run(
@@ -221,21 +221,21 @@ def _run_file(path: Path, args: list, timeout: int) -> str:
         output = result.stdout.strip()
         error  = result.stderr.strip()
         parts  = []
-        if output: parts.append(f"Output:\n{output}")
-        if error:  parts.append(f"Stderr:\n{error}")
-        return "\n\n".join(parts) if parts else "Executed with no output."
+        if output: parts.append(f"Salida:\n{output}")
+        if error:  parts.append(f"Error estándar:\n{error}")
+        return "\n\n".join(parts) if parts else "Ejecutado sin salida."
 
     except subprocess.TimeoutExpired:
-        return f"Timed out after {timeout}s."
+        return f"Tiempo de espera agotado tras {timeout}s."
     except FileNotFoundError:
-        return f"Interpreter not found: {interp[0]}."
+        return f"Intérprete no encontrado: {interp[0]}."
     except Exception as e:
-        return f"Execution error: {e}"
+        return f"Error de ejecución: {e}"
 
 
 def _build(description, language, output_path, args, timeout, speak=None, player=None) -> str:
     if not description:
-        return "Please describe what you want me to build, sir."
+        return "Por favor, describa lo que desea que construya, señor."
 
     if player:
         player.write_log("[Code] Build started...")
@@ -246,7 +246,7 @@ def _build(description, language, output_path, args, timeout, speak=None, player
         code, path = _write(description, lang, output_path, player)
         print(f"[Code] ✅ Written: {path}")
     except Exception as e:
-        msg = f"Could not write initial code: {e}"
+        msg = f"No se pudo escribir el código inicial: {e}"
         if speak: speak(msg)
         return msg
 
@@ -260,12 +260,12 @@ def _build(description, language, output_path, args, timeout, speak=None, player
 
         if not _has_error(last_output):
             msg = (
-                f"Build complete, sir. "
-                f"The code is working after {attempt} attempt{'s' if attempt > 1 else ''}. "
-                f"Saved to {path}."
+                f"Construcción completa, señor. "
+                f"El código funciona después de {attempt} intento{'s' if attempt > 1 else ''}. "
+                f"Guardado en {path}."
             )
             if speak: speak(msg)
-            return f"{msg}\n\nOutput:\n{last_output}"
+            return f"{msg}\n\nSalida:\n{last_output}"
 
         print(f"[Code] ⚠️ Error on attempt {attempt}, fixing...")
         if player:
@@ -275,35 +275,35 @@ def _build(description, language, output_path, args, timeout, speak=None, player
             code = _fix_code(code, last_output, description)
             _save_file(path, code)
         except Exception as e:
-            msg = f"Could not fix code on attempt {attempt}: {e}"
+            msg = f"No se pudo corregir el código en el intento {attempt}: {e}"
             if speak: speak(msg)
             return msg
 
     msg = (
-        f"I was unable to build a working version after {MAX_BUILD_ATTEMPTS} attempts, sir. "
-        f"The last error was: {last_output[:200]}"
+        f"No pude construir una versión funcional después de {MAX_BUILD_ATTEMPTS} intentos, señor. "
+        f"El último error fue: {last_output[:200]}"
     )
     if speak: speak(msg)
-    return f"{msg}\n\nLast code saved to: {path}"
+    return f"{msg}\n\nÚltimo código guardado en: {path}"
 
 def _write_action(description, language, output_path, player) -> str:
     if not description:
-        return "Please describe what you want me to write, sir."
+        return "Por favor, describa lo que desea que escriba, señor."
     if player:
         player.write_log("[Code] Writing code...")
     try:
         code, path = _write(description, language, output_path, player)
         print(f"[Code] ✅ Written: {path}")
-        return f"Code written. Saved to: {path}\n\nPreview:\n{_preview(code)}"
+        return f"Código escrito. Guardado en: {path}\n\nVista previa:\n{_preview(code)}"
     except Exception as e:
-        return f"Could not generate code: {e}"
+        return f"No se pudo generar el código: {e}"
 
 
 def _edit_action(file_path, instruction, player) -> str:
     if not file_path:
-        return "Please provide a file path to edit, sir."
+        return "Proporcione la ruta de un archivo para editar, señor."
     if not instruction:
-        return "Please describe what change to make, sir."
+        return "Describa qué cambio desea realizar, señor."
 
     content, err = _read_file(file_path)
     if err:
@@ -328,11 +328,11 @@ Updated code:"""
         response = model.generate_content(prompt)
         edited   = _clean_code(response.text)
     except Exception as e:
-        return f"Could not edit code: {e}"
+        return f"No se pudo editar el código: {e}"
 
     status = _save_file(Path(file_path), edited)
     print(f"[Code] ✅ Edited: {file_path}")
-    return f"File edited. {status}\n\nPreview:\n{_preview(edited)}"
+    return f"Archivo editado. {status}\n\nVista previa:\n{_preview(edited)}"
 
 
 def _explain_action(file_path, code, player) -> str:
@@ -341,7 +341,7 @@ def _explain_action(file_path, code, player) -> str:
         if err:
             return err
     if not code:
-        return "Please provide code or a file path to explain, sir."
+        return "Proporcione código o la ruta de un archivo para explicar, señor."
 
     if player:
         player.write_log("[Code] Analyzing code...")
@@ -360,15 +360,15 @@ Explanation:"""
         response = model.generate_content(prompt)
         return response.text.strip()
     except Exception as e:
-        return f"Could not explain code: {e}"
+        return f"No se pudo explicar el código: {e}"
 
 
 def _run_action(file_path, args, timeout, player) -> str:
     if not file_path:
-        return "Please provide a file path to run, sir."
+        return "Proporcione la ruta de un archivo para ejecutar, señor."
     p = Path(file_path)
     if not p.exists():
-        return f"File not found: {file_path}"
+        return f"Archivo no encontrado: {file_path}"
     if player:
         player.write_log(f"[Code] Running {p.name}...")
     return _run_file(p, args, timeout)
@@ -381,7 +381,7 @@ def _optimize_action(file_path, code, language, output_path, player) -> str:
         if err:
             return err
     if not code:
-        return "Please provide code or a file path to optimize, sir."
+        return "Proporcione código o la ruta de un archivo para optimizar, señor."
 
     if player:
         player.write_log("[Code] Optimizing code...")
@@ -407,7 +407,7 @@ Optimized code:"""
         response  = model.generate_content(prompt)
         optimized = _clean_code(response.text)
     except Exception as e:
-        return f"Could not optimize code: {e}"
+        return f"No se pudo optimizar el código: {e}"
 
     # Kaydet
     if file_path:
@@ -423,10 +423,10 @@ Optimized code:"""
     diff = original_lines - optimized_lines
 
     return (
-        f"Code optimized. {status}\n"
-        f"Lines: {original_lines} → {optimized_lines} "
-        f"({'−' if diff > 0 else '+'}{abs(diff)} lines)\n\n"
-        f"Preview:\n{_preview(optimized)}"
+        f"Código optimizado. {status}\n"
+        f"Líneas: {original_lines} → {optimized_lines} "
+        f"({'−' if diff > 0 else '+'}{abs(diff)} líneas)\n\n"
+        f"Vista previa:\n{_preview(optimized)}"
     )
 
 
@@ -440,7 +440,7 @@ def _screen_debug_action(description, file_path, player, speak=None) -> str:
 
     screenshot_path = _take_screenshot()
     if not screenshot_path:
-        return "Could not take screenshot, sir. Please make sure PyAutoGUI is installed."
+        return "No se pudo tomar la captura de pantalla, señor. Asegúrese de que PyAutoGUI esté instalado."
 
 
     file_content = ""
@@ -491,7 +491,7 @@ Be specific and actionable. If you see an error message, quote it exactly."""
                 fixed_code = code_match.group(1).strip()
                 save_path  = Path(file_path)
                 _save_file(save_path, fixed_code)
-                analysis += f"\n\n✅ Fixed code has been saved to: {file_path}"
+                analysis += f"\n\n✅ El código corregido se ha guardado en: {file_path}"
                 print(f"[Code] ✅ Fixed code saved: {file_path}")
 
         return analysis
@@ -502,7 +502,7 @@ Be specific and actionable. If you see an error message, quote it exactly."""
             screenshot_path.unlink()
         except Exception:
             pass
-        return f"Screen analysis failed: {e}"
+        return f"Falló el análisis de pantalla: {e}"
 
 
 def code_helper(
@@ -565,4 +565,4 @@ def code_helper(
         return _screen_debug_action(description, file_path, player, speak)
 
     else:
-        return f"Unknown action: '{action}'. Use write, edit, explain, run, build, optimize, or screen_debug."
+        return f"Acción desconocida: '{action}'. Use write, edit, explain, run, build, optimize o screen_debug."

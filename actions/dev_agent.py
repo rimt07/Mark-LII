@@ -230,7 +230,7 @@ Code for {file_path}:"""
 
 def _install_dependencies(dependencies: list[str], project_dir: Path) -> str:
     if not dependencies:
-        return "No external dependencies."
+        return "No hay dependencias externas."
 
     to_install = []
     for dep in dependencies:
@@ -245,7 +245,7 @@ def _install_dependencies(dependencies: list[str], project_dir: Path) -> str:
             print(f"[DevAgent] ✓ Already installed: {pkg_name}")
 
     if not to_install:
-        return f"All dependencies already installed: {', '.join(dependencies)}"
+        return f"Todas las dependencias ya están instaladas: {', '.join(dependencies)}"
 
     print(f"[DevAgent] 📦 Installing: {to_install}")
     try:
@@ -256,12 +256,12 @@ def _install_dependencies(dependencies: list[str], project_dir: Path) -> str:
             timeout=120, cwd=str(project_dir)
         )
         if result.returncode == 0:
-            return f"Installed: {', '.join(to_install)}"
-        return f"Install warning (non-fatal): {result.stderr[:200]}"
+            return f"Instaladas: {', '.join(to_install)}"
+        return f"Advertencia de instalación (no fatal): {result.stderr[:200]}"
     except subprocess.TimeoutExpired:
-        return "Dependency install timed out (non-fatal)."
+        return "La instalación de dependencias agotó el tiempo (no fatal)."
     except Exception as e:
-        return f"Install error (non-fatal): {e}"
+        return f"Error de instalación (no fatal): {e}"
 
 def _open_vscode(project_dir: Path) -> bool:
     vscode_candidates = [
@@ -308,14 +308,14 @@ def _run_project(run_command: str, project_dir: Path, timeout: int = 30) -> str:
         if stderr:
             combined_parts.append(f"STDERR:\n{stderr}")
 
-        return "\n\n".join(combined_parts) if combined_parts else "Ran with no output."
+        return "\n\n".join(combined_parts) if combined_parts else "Se ejecutó sin salida."
 
     except subprocess.TimeoutExpired:
-        return f"Timed out after {timeout}s — long-running app (server/GUI) is likely working."
+        return f"Se agotó el tiempo después de {timeout}s — es probable que la aplicación de larga duración (servidor/GUI) esté funcionando."
     except FileNotFoundError as e:
-        return f"Command not found: {e}"
+        return f"Comando no encontrado: {e}"
     except Exception as e:
-        return f"Run error: {e}"
+        return f"Error de ejecución: {e}"
 
 def _try_auto_install(error_output: str, project_dir: Path) -> bool:
     """ModuleNotFoundError varsa eksik paketi otomatik kurmaya çalışır."""
@@ -446,11 +446,11 @@ def _build_project(
     try:
         plan = _plan_project(description, language)
     except RateLimitError:
-        msg = "Rate limit reached, sir. Please try again in a moment."
+        msg = "Se alcanzó el límite de solicitudes, señor. Inténtelo de nuevo en un momento."
         if speak: speak(msg)
         return msg
     except ValueError as e:
-        msg = f"Planning failed: {e}"
+        msg = f"La planificación falló: {e}"
         if speak: speak(msg)
         return msg
 
@@ -503,7 +503,7 @@ def _build_project(
                 break
 
     if not file_codes:
-        msg = "I could not write any project files, sir."
+        msg = "No pude escribir ningún archivo del proyecto, señor."
         if speak: speak(msg)
         return msg
 
@@ -523,12 +523,12 @@ def _build_project(
 
         if not _has_error(last_output, run_command):
             msg = (
-                f"Project '{proj_name}' is working, sir. "
-                f"Built in {attempt} attempt{'s' if attempt > 1 else ''}. "
-                f"Saved to: {project_dir}"
+                f"El proyecto '{proj_name}' funciona, señor. "
+                f"Construido en {attempt} intento{'s' if attempt > 1 else ''}. "
+                f"Guardado en: {project_dir}"
             )
             if speak: speak(msg)
-            return f"{msg}\n\nOutput:\n{last_output}"
+            return f"{msg}\n\nSalida:\n{last_output}"
 
         if attempt == MAX_FIX_ATTEMPTS:
             break
@@ -556,18 +556,18 @@ def _build_project(
             file_codes.update(updated)
             time.sleep(1)
         except RateLimitError:
-            msg = "Rate limit reached during fix. Project saved, check it manually in VSCode."
+            msg = "Se alcanzó el límite de solicitudes durante la corrección. Proyecto guardado, revíselo manualmente en VSCode."
             if speak: speak(msg)
             return msg
         except Exception as e:
             log(f"Fix step failed: {e}")
 
     msg = (
-        f"I couldn't fully fix '{proj_name}' after {MAX_FIX_ATTEMPTS} attempts, sir. "
-        f"Project is saved at {project_dir} — open it in VSCode and check manually."
+        f"No pude corregir completamente '{proj_name}' después de {MAX_FIX_ATTEMPTS} intentos, señor. "
+        f"El proyecto está guardado en {project_dir} — ábralo en VSCode y revíselo manualmente."
     )
     if speak: speak(msg)
-    return f"{msg}\n\nLast error:\n{last_output[:600]}"
+    return f"{msg}\n\nÚltimo error:\n{last_output[:600]}"
 
 
 def dev_agent(
@@ -584,7 +584,7 @@ def dev_agent(
     timeout      = int(p.get("timeout", 30))
 
     if not description:
-        return "Please describe the project you want me to build, sir."
+        return "Describa el proyecto que desea que construya, señor."
 
     return _build_project(
         description  = description,

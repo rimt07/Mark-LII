@@ -243,7 +243,7 @@ class MCPServerConnection:
             if result.isError:
                 return {
                     "success": False,
-                    "error": f"Tool error: {getattr(result, 'error', 'Unknown error')}"
+                    "error": f"Error de herramienta: {getattr(result, 'error', 'Error desconocido')}"
                 }
 
             # Extract text content from result
@@ -444,21 +444,21 @@ class MCPManager:
         # Parse namespace: fs_read_file → server_id="fs", tool_name="read_file"
         parts = namespaced_name.split("_", 1)
         if len(parts) != 2:
-            return f"Invalid tool name format: {namespaced_name}"
+            return f"Formato de nombre de herramienta inválido: {namespaced_name}"
 
         server_id, tool_name = parts
 
         # Get server connection
         conn = self.servers.get(server_id)
         if not conn:
-            return f"Unknown MCP server: {server_id}"
+            return f"Servidor MCP desconocido: {server_id}"
 
         if not conn.is_connected():
             # Attempt reconnection
             self.logger(f"[MCP] Server '{server_id}' disconnected, attempting reconnect...")
             success = await conn.reconnect()
             if not success:
-                return f"Sir, the {server_id} server is not connected and reconnection failed."
+                return f"Señor, el servidor {server_id} no está conectado y la reconexión falló."
 
         # Call tool via MCP
         result = await conn.call_tool(tool_name, parameters)
@@ -466,7 +466,7 @@ class MCPManager:
         if result["success"]:
             return result["result"]
         else:
-            return f"Sir, the tool failed: {result['error']}"
+            return f"Señor, la herramienta falló: {result['error']}"
 
     async def shutdown(self):
         """Cleanly disconnect from all MCP servers"""

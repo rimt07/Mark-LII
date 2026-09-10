@@ -29,7 +29,9 @@ pywin32; sys_platform == "win32"
 qrcode[pil]
 mcp>=1.0.0
 ollama
-openai-whisper
+faster-whisper
+nvidia-cublas-cu12; sys_platform == "win32"
+nvidia-cuda-runtime-cu12; sys_platform == "win32"
 edge-tts
 kokoro-onnx
 soundfile

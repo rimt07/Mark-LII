@@ -8,12 +8,19 @@ import asyncio
 import base64
 import json
 import os
+import re
 import tempfile
 import time
-import wave
 from typing import Callable, List, Dict, Any
 
+from core.stt import WhisperSTT
+
 import numpy as np
+
+# Sentence boundary for streaming TTS — speak each clause as the LLM generates it.
+_SENT_END = re.compile(r'(?<=[.!?])\s+|(?<=\n)\s*\n')
+# If the model omits punctuation, flush a long buffer at the last space.
+_MAX_TTS_CHUNK = 120
 
 
 class OllamaBackend:
@@ -62,6 +69,7 @@ class OllamaBackend:
         self.ollama_base_url = config.get("base_url", "http://localhost:11434")
         self.ollama_model = config.get("model", "llama3.2:latest")
         self.temperature = float(config.get("temperature", 0.7))
+        self.stream_enabled = bool(config.get("stream", True))
         self.vision_model = (config.get("vision_model") or "").strip() or None
 
         # STT/TTS engines
@@ -148,36 +156,21 @@ class OllamaBackend:
 
             if stt_engine == "whisper":
                 try:
-                    import whisper
                     model_size = stt_config.get("model", "base")
-
-                    # Pick the device. Honour an explicit config override
-                    # ("cuda"/"cpu"); otherwise auto-detect CUDA. On CPU, Whisper
-                    # warns "FP16 is not supported on CPU; using FP32" and runs
-                    # noticeably slower — moving to the GPU (when a CUDA-enabled
-                    # torch is installed) removes that warning and speeds up STT.
                     _dev = (stt_config.get("device", "") or "").strip().lower()
-                    if _dev not in ("cuda", "cpu"):
-                        try:
-                            import torch
-                            _dev = "cuda" if torch.cuda.is_available() else "cpu"
-                        except Exception:
-                            _dev = "cpu"
-
-                    self.ui_logger(f"[Ollama] Loading Whisper model: {model_size} on {_dev}...")
-                    try:
-                        self.stt_engine = whisper.load_model(model_size, device=_dev)
-                    except Exception as _e:
-                        # A CUDA load can fail (out of VRAM, driver mismatch);
-                        # never let that take STT down — retry on CPU.
-                        if _dev == "cuda":
-                            self.ui_logger(f"[Ollama] Whisper GPU load failed ({_e}); using CPU.")
-                            self.stt_engine = whisper.load_model(model_size, device="cpu")
-                        else:
-                            raise
+                    _dev = _dev if _dev in ("cuda", "cpu") else None
+                    self.stt_engine = WhisperSTT(
+                        model_size,
+                        language=stt_config.get("language"),
+                        device=_dev,
+                        logger=self.ui_logger,
+                    )
                     self.ui_logger("[Ollama] Whisper loaded successfully")
                 except ImportError:
-                    self.ui_logger("[Ollama] ERROR: 'whisper' package not installed. Run: pip install -U openai-whisper")
+                    self.ui_logger(
+                        "[Ollama] ERROR: 'faster-whisper' not installed. "
+                        "Run: pip install faster-whisper nvidia-cublas-cu12 nvidia-cuda-runtime-cu12"
+                    )
                     return False
 
             # Initialize TTS
@@ -392,35 +385,14 @@ class OllamaBackend:
                     )
                 return
 
-            # Save to temporary WAV file for Whisper
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-                tmp_path = tmp.name
-
-            with wave.open(tmp_path, 'wb') as wf:
-                wf.setnchannels(1)
-                wf.setsampwidth(2)
-                wf.setframerate(self.sample_rate)
-                wf.writeframes((audio_np * 32768).astype(np.int16).tobytes())
-
-            # Transcribe with Whisper. Whisper does NOT accept the literal
-            # "auto" as a language — autodetection requires language=None. The
-            # config default of "auto" (and any empty value) is therefore mapped
-            # to None here, so Whisper detects the spoken language per utterance.
-            _lang = (self.config.get("stt", {}).get("language", "") or "").strip().lower()
-            _whisper_lang = None if _lang in ("", "auto") else _lang
             _t0 = time.monotonic()
-            result = await asyncio.to_thread(
+            user_text, _detected = await asyncio.to_thread(
                 self.stt_engine.transcribe,
-                tmp_path,
-                language=_whisper_lang
+                audio_np,
             )
             _elapsed = time.monotonic() - _t0
 
-            os.unlink(tmp_path)
-
-            user_text = result.get("text", "").strip()
             if self._vad_debug:
-                _detected = result.get("language", "?")
                 self.ui_logger(
                     f"[Ollama] Whisper took {_elapsed:.1f}s, detected lang '{_detected}', "
                     f"text: {user_text!r}"
@@ -524,16 +496,248 @@ class OllamaBackend:
         except Exception:
             return str(fn_response)
 
+    def _build_chat_kwargs(self, use_tools: bool) -> dict:
+        opts: dict = {"temperature": self.temperature}
+        num_predict = self.config.get("num_predict")
+        if num_predict is not None:
+            opts["num_predict"] = int(num_predict)
+        kwargs = dict(
+            model=self.ollama_model,
+            messages=self.messages,
+            options=opts,
+            keep_alive=-1,
+        )
+        if use_tools:
+            kwargs["tools"] = self.ollama_tools
+        return kwargs
+
+    @staticmethod
+    def _normalize_stream_message(chunk) -> dict:
+        """Normalise one Ollama stream chunk to a plain message dict."""
+        msg = chunk.get("message", {}) if isinstance(chunk, dict) else getattr(chunk, "message", chunk)
+        if isinstance(msg, dict):
+            return {
+                "role": msg.get("role", "assistant"),
+                "content": msg.get("content", "") or "",
+                "tool_calls": msg.get("tool_calls") or [],
+            }
+        return {
+            "role": getattr(msg, "role", "assistant"),
+            "content": getattr(msg, "content", "") or "",
+            "tool_calls": getattr(msg, "tool_calls", None) or [],
+        }
+
+    def _extract_sentences(self, buf: str) -> tuple[list[str], str]:
+        """Pull complete sentences (or long clauses) from a growing text buffer."""
+        sentences: list[str] = []
+        while buf:
+            match = _SENT_END.search(buf)
+            if match:
+                sentence = buf[: match.start() + 1].strip()
+                buf = buf[match.end() :]
+                if sentence:
+                    sentences.append(sentence)
+                continue
+            if len(buf) >= _MAX_TTS_CHUNK:
+                split_at = buf.rfind(" ", 0, _MAX_TTS_CHUNK)
+                if split_at < 20:
+                    split_at = _MAX_TTS_CHUNK
+                sentence = buf[:split_at].strip()
+                buf = buf[split_at:].lstrip()
+                if sentence:
+                    sentences.append(sentence)
+                continue
+            break
+        return sentences, buf
+
+    async def _edge_tts_to_file(self, text: str) -> str | None:
+        """Synthesize Edge TTS via streaming HTTP chunks (faster than save())."""
+        import edge_tts
+
+        fd, tmp_path = tempfile.mkstemp(suffix=".mp3", prefix="edge_")
+        os.close(fd)
+        try:
+            comm = edge_tts.Communicate(text, self.tts_voice)
+            with open(tmp_path, "wb") as handle:
+                async for chunk in comm.stream():
+                    if chunk["type"] == "audio":
+                        handle.write(chunk["data"])
+            return tmp_path
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+            raise
+
+    async def _synthesize_tts_file(self, text: str) -> str | None:
+        """Synthesize one sentence/clause to a temp audio file."""
+        if not text or self._interrupted:
+            return None
+        if self._vad_debug:
+            self.ui_logger(f"[Ollama] TTS synthesizing: {text[:80]!r}")
+        if self.tts_engine == "kokoro":
+            return await asyncio.to_thread(self.tts_kokoro.synthesize_sync, text)
+        if self.tts_engine == "edge":
+            return await self._edge_tts_to_file(text)
+        return None
+
+    async def _play_tts_file(self, path: str) -> bool:
+        """Play a synthesized temp file and delete it."""
+        if not path or self._interrupted:
+            return False
+        try:
+            return await self._play_audio_file(path)
+        finally:
+            try:
+                os.unlink(path)
+            except Exception:
+                pass
+
+    async def _play_tts_chunks(self, chunks: list[str]) -> None:
+        """
+        Play sentences with pipelined synthesis — chunk N+1 synthesises while
+        chunk N plays so gaps between periods stay minimal.
+        """
+        chunks = [c for c in chunks if c and c.strip()]
+        if not chunks or self._interrupted:
+            return
+
+        pending = asyncio.create_task(self._synthesize_tts_file(chunks[0]))
+        any_played = False
+
+        for i, text in enumerate(chunks):
+            if self._interrupted:
+                pending.cancel()
+                break
+
+            try:
+                path = await pending
+            except asyncio.CancelledError:
+                break
+
+            if i + 1 < len(chunks):
+                pending = asyncio.create_task(self._synthesize_tts_file(chunks[i + 1]))
+
+            if not path:
+                engine = self.tts_engine or "none"
+                self.ui_logger(f"[Ollama] TTS: {engine} synthesis returned no audio.")
+                continue
+
+            if await self._play_tts_file(path):
+                any_played = True
+
+        if not any_played and not self._interrupted:
+            self.ui_logger("[Ollama] TTS: playback failed - check speaker in Settings.")
+
+    async def _play_tts_chunk(self, text: str) -> None:
+        """Synthesize and play one sentence/clause. Caller must hold _speak_lock."""
+        await self._play_tts_chunks([text])
+
+    async def _stream_chat_with_tts(self, kwargs: dict) -> tuple[str, list, bool]:
+        """
+        Stream an Ollama chat turn and speak each sentence as it arrives.
+        Returns (full_text, tool_calls, spoke_via_tts).
+        """
+        stream_kwargs = dict(kwargs)
+        stream_kwargs["stream"] = True
+        if self._vad_debug:
+            self.ui_logger("[Ollama] Waiting for model stream...")
+        stream = await self.ollama_client.chat(**stream_kwargs)
+
+        full_content = ""
+        buf = ""
+        tool_calls: list = []
+        spoke = False
+        use_tts = bool(self.tts_engine) and not self._interrupted
+        wait_logged = False
+
+        async with self._speak_lock:
+            if use_tts:
+                self._set_speaking(True)
+            try:
+                async for chunk in stream:
+                    if self._interrupted:
+                        break
+
+                    msg = self._normalize_stream_message(chunk)
+                    delta = msg.get("content") or ""
+                    if delta:
+                        if not wait_logged:
+                            wait_logged = True
+                            if self._vad_debug:
+                                self.ui_logger("[Ollama] First token received.")
+                        full_content += delta
+                        buf += delta
+                        sentences, buf = self._extract_sentences(buf)
+                        if sentences:
+                            if use_tts:
+                                self.speak_callback(full_content)
+                                await self._play_tts_chunks(sentences)
+                                spoke = True
+                            elif not spoke:
+                                self.speak_callback(full_content)
+                                spoke = True
+
+                    tc = msg.get("tool_calls") or []
+                    if tc:
+                        tool_calls.extend(tc)
+
+                tool_calls = self._dedupe_tool_calls(tool_calls)
+
+                if buf.strip() and use_tts and not self._interrupted:
+                    self.speak_callback(full_content)
+                    await self._play_tts_chunk(buf.strip())
+                    spoke = True
+            except Exception as e:
+                self.ui_logger(f"[Ollama] Stream error: {e}")
+                raise
+            finally:
+                if use_tts:
+                    self._set_speaking(False)
+
+        if not wait_logged and not full_content and not tool_calls:
+            self.ui_logger("[Ollama] Model returned empty response.")
+
+        return full_content.strip(), tool_calls, spoke
+
+    @staticmethod
+    def _dedupe_tool_calls(tool_calls: list) -> list:
+        """Ollama streaming may repeat the same tool_call across chunks."""
+        seen: set[tuple] = set()
+        unique: list = []
+        for call in tool_calls or []:
+            fn = call.get("function") if isinstance(call, dict) else getattr(call, "function", None)
+            if isinstance(fn, dict):
+                key = (fn.get("name"), json.dumps(fn.get("arguments", {}), sort_keys=True, default=str))
+            else:
+                key = (getattr(fn, "name", None), str(getattr(fn, "arguments", {})))
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(call)
+        return unique
+
+    async def _chat_non_streaming(self, kwargs: dict) -> tuple[str, list]:
+        """Single non-streaming Ollama chat turn."""
+        resp = await self.ollama_client.chat(**kwargs)
+        msg = resp.get("message", {}) if isinstance(resp, dict) else getattr(resp, "message", {})
+        if not isinstance(msg, dict):
+            msg = {
+                "role": getattr(msg, "role", "assistant"),
+                "content": getattr(msg, "content", "") or "",
+                "tool_calls": getattr(msg, "tool_calls", None),
+            }
+        return (msg.get("content", "") or "", msg.get("tool_calls") or [])
+
     async def _generate_response(self):
         """
         Generate a response from Ollama, executing any tools the model calls.
 
-        Flow: send the conversation (with the tool list) to Ollama; if the reply
-        contains tool_calls, run each via the app's tool_executor, feed the
-        results back as role="tool" messages, and ask the model again — looping
-        until it produces a plain text answer or a safety cap is hit. Streaming
-        is disabled while tools are enabled because tool_calls arrive in the
-        final message object, not in streamed content deltas.
+        When streaming is enabled (config ``stream: true``), tokens are spoken
+        sentence-by-sentence via TTS as they arrive instead of waiting for the
+        full reply. Tool calls are accumulated from the stream and executed in
+        the same loop as before.
         """
         try:
             self.ui_logger("[Ollama] Generating response...")
@@ -545,37 +749,31 @@ class OllamaBackend:
             for _round in range(max_tool_rounds + 1):
                 if self._interrupted:
                     return
-                kwargs = dict(
-                    model=self.ollama_model,
-                    messages=self.messages,
-                    options={"temperature": self.temperature},
-                )
-                if use_tools:
-                    kwargs["tools"] = self.ollama_tools
 
-                resp = await self.ollama_client.chat(**kwargs)
+                kwargs = self._build_chat_kwargs(use_tools)
+                spoke = False
 
-                # Normalise message access across ollama-python versions.
-                msg = resp.get("message", {}) if isinstance(resp, dict) else getattr(resp, "message", {})
-                if not isinstance(msg, dict):
-                    msg = {
-                        "role": getattr(msg, "role", "assistant"),
-                        "content": getattr(msg, "content", "") or "",
-                        "tool_calls": getattr(msg, "tool_calls", None),
-                    }
+                if self.stream_enabled and self.tts_engine:
+                    content, tool_calls, spoke = await self._stream_chat_with_tts(kwargs)
+                else:
+                    content, tool_calls = await self._chat_non_streaming(kwargs)
 
-                content = msg.get("content", "") or ""
-                tool_calls = msg.get("tool_calls") or []
+                if tool_calls and not spoke and not content.strip() and self.tts_engine:
+                    self.ui_logger("[Ollama] Tool call without speech - playing hold prompt.")
+                    await self._synthesize_speech("Un momento.")
 
                 if not tool_calls:
-                    # Plain answer — done.
                     response_text = content
                     if content:
                         self.messages.append({"role": "assistant", "content": content})
+                    if self._interrupted:
+                        return
+                    if content:
+                        self.ui_logger(f"[Ollama] Assistant: {response_text}")
+                    if content and not spoke:
+                        await self._synthesize_speech(response_text)
                     break
 
-                # The model wants to call tools. Record its (possibly empty)
-                # assistant turn with the tool_calls so the context is coherent.
                 self.messages.append({
                     "role": "assistant",
                     "content": content,
@@ -590,49 +788,35 @@ class OllamaBackend:
                     else:
                         fn_name = getattr(fn, "name", None)
                         fn_args = getattr(fn, "arguments", {})
-                    # Ollama may hand arguments back as a JSON string.
                     if isinstance(fn_args, str):
                         try:
                             fn_args = json.loads(fn_args) if fn_args.strip() else {}
                         except Exception:
                             fn_args = {}
 
-                    self.ui_logger(f"[Ollama] 🔧 tool call: {fn_name} {fn_args}")
+                    self.ui_logger(f"[Ollama] tool call: {fn_name} {fn_args}")
 
                     if not fn_name:
-                        result_text = "Tool call had no name."
+                        result_text = "La llamada a herramienta no tenía nombre."
                     else:
                         try:
                             fc = self._FnCall(fn_name, fn_args, f"ollama-{_round}-{fn_name}")
                             fn_response = await self.tool_executor(fc)
                             result_text = self._extract_result_text(fn_response)
                         except Exception as e:
-                            result_text = f"Tool '{fn_name}' failed: {e}"
+                            result_text = f"La herramienta '{fn_name}' falló: {e}"
                             self.ui_logger(f"[Ollama] tool error: {e}")
 
                     if self._vad_debug:
-                        self.ui_logger(f"[Ollama] 📤 {fn_name} → {str(result_text)[:120]}")
+                        self.ui_logger(f"[Ollama] tool result: {fn_name} -> {str(result_text)[:120]}")
 
-                    # Feed the tool result back for the next round.
                     self.messages.append({
                         "role": "tool",
                         "name": fn_name,
                         "content": str(result_text),
                     })
             else:
-                # Loop exhausted without a final text answer.
                 self.ui_logger("[Ollama] Tool loop hit its round cap; answering with what we have.")
-
-            if not response_text:
-                return
-
-            if self._interrupted:
-                return
-
-            self.ui_logger(f"[Ollama] Assistant: {response_text}")
-
-            # Synthesize speech
-            await self._synthesize_speech(response_text)
 
         except Exception as e:
             self.ui_logger(f"[Ollama] Generation error: {e}")
@@ -671,7 +855,7 @@ class OllamaBackend:
             else:
                 text = (msg.get("content") or "").strip()
             if not text:
-                text = "I could not analyse that image."
+                text = "No pude analizar esa imagen."
             self.messages.append({"role": "user", "content": f"[Vision] {prompt}"})
             self.messages.append({"role": "assistant", "content": text})
             if speak_result and not self._interrupted:
@@ -679,9 +863,9 @@ class OllamaBackend:
             return text
         except Exception as e:
             err = (
-                f"Vision failed with model '{model}': {e}. "
-                f"Pull a multimodal model (e.g. ollama pull llava) and set "
-                f"ollama.vision_model in config/llm_config.json."
+                f"Falló la visión con el modelo '{model}': {e}. "
+                f"Descarga un modelo multimodal (p. ej. ollama pull llava) y configura "
+                f"ollama.vision_model en config/llm_config.json."
             )
             self.ui_logger(f"[Ollama] {err}")
             return err
@@ -756,7 +940,7 @@ class OllamaBackend:
         return await asyncio.to_thread(_blocking_play)
 
     async def _synthesize_speech(self, text: str):
-        """Convert text to speech and play it on the chosen speaker."""
+        """Convert text to speech and play it sentence-by-sentence."""
         if not text or not str(text).strip():
             return
         if self._interrupted:
@@ -772,34 +956,14 @@ class OllamaBackend:
             self.speak_callback(text)
             self._set_speaking(True)
             try:
-                if self.tts_engine == "kokoro":
-                    audio_path = await self.tts_kokoro.synthesize(text)
-                    if audio_path and not self._interrupted:
-                        try:
-                            await self._play_audio_file(audio_path)
-                        finally:
-                            try:
-                                os.unlink(audio_path)
-                            except Exception:
-                                pass
-
-                elif self.tts_engine == "edge":
-                    import edge_tts
-
-                    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
-                        tmp_path = tmp.name
-                    try:
-                        if not self._interrupted:
-                            communicate = edge_tts.Communicate(text, self.tts_voice)
-                            await communicate.save(tmp_path)
-                            if not self._interrupted:
-                                await self._play_audio_file(tmp_path)
-                    finally:
-                        try:
-                            os.unlink(tmp_path)
-                        except Exception:
-                            pass
-
+                buf = text.strip()
+                while buf and not self._interrupted:
+                    sentences, buf = self._extract_sentences(buf)
+                    if sentences:
+                        await self._play_tts_chunks(sentences)
+                    if buf.strip() and len(buf) < _MAX_TTS_CHUNK and not _SENT_END.search(buf):
+                        await self._play_tts_chunks([buf.strip()])
+                        break
             except Exception as e:
                 self.ui_logger(f"[Ollama] TTS error: {e}")
             finally:
@@ -826,7 +990,7 @@ class OllamaBackend:
             fc = self._FnCall(tool_name, parameters, f"ollama-manual-{tool_name}")
             fn_response = await self.tool_executor(fc)
             return self._extract_result_text(fn_response)
-        return "Tool execution not configured"
+        return "Ejecución de herramientas no configurada"
 
     def reset_conversation(self):
         """Clear conversation history"""

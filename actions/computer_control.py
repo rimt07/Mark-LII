@@ -77,7 +77,7 @@ def _safe_screenshot_path(requested: str | None) -> Path:
 
 def _require_pyautogui():
     if not _PYAUTOGUI:
-        raise RuntimeError("PyAutoGUI not installed. Run: pip install pyautogui")
+        raise RuntimeError("PyAutoGUI no está instalado. Ejecuta: pip install pyautogui")
 
 _FIRST_NAMES = [
     "Alex", "Jordan", "Taylor", "Morgan", "Casey", "Riley", "Drew", "Quinn",
@@ -158,7 +158,7 @@ def _type(text: str, interval: float = 0.03) -> str:
     _require_pyautogui()
     time.sleep(0.3)
     pyautogui.typewrite(text, interval=interval)
-    return f"Typed: {text[:60]}{'…' if len(text) > 60 else ''}"
+    return f"Escrito: {text[:60]}{'…' if len(text) > 60 else ''}"
 
 
 def _smart_type(text: str, clear_first: bool = True) -> str:
@@ -172,31 +172,31 @@ def _smart_type(text: str, clear_first: bool = True) -> str:
         time.sleep(0.1)
         paste_key = "command" if _get_os() == "mac" else "ctrl"
         pyautogui.hotkey(paste_key, "v")
-        return f"Smart-typed (clipboard): {text[:60]}{'…' if len(text) > 60 else ''}"
+        return f"Escrito (portapapeles): {text[:60]}{'…' if len(text) > 60 else ''}"
 
     pyautogui.typewrite(text, interval=0.04)
-    return f"Smart-typed: {text[:60]}{'…' if len(text) > 60 else ''}"
+    return f"Escrito: {text[:60]}{'…' if len(text) > 60 else ''}"
 
 
 def _click(x=None, y=None, button: str = "left", clicks: int = 1) -> str:
     _require_pyautogui()
     if x is not None and y is not None:
         pyautogui.click(x, y, button=button, clicks=clicks)
-        return f"{'Double-c' if clicks == 2 else 'C'}licked ({x}, {y}) [{button}]"
+        return f"{'Doble c' if clicks == 2 else 'C'}lic en ({x}, {y}) [{button}]"
     pyautogui.click(button=button, clicks=clicks)
-    return f"Clicked at current position [{button}]"
+    return f"Clic en la posición actual [{button}]"
 
 
 def _hotkey(*keys) -> str:
     _require_pyautogui()
     pyautogui.hotkey(*keys)
-    return f"Hotkey: {'+'.join(keys)}"
+    return f"Atajo: {'+'.join(keys)}"
 
 
 def _press(key: str) -> str:
     _require_pyautogui()
     pyautogui.press(key)
-    return f"Pressed: {key}"
+    return f"Pulsado: {key}"
 
 
 def _scroll(direction: str = "down", amount: int = 3) -> str:
@@ -204,20 +204,20 @@ def _scroll(direction: str = "down", amount: int = 3) -> str:
     vertical   = direction in ("up", "down")
     clicks     = amount if direction in ("up", "right") else -amount
     pyautogui.scroll(clicks) if vertical else pyautogui.hscroll(clicks)
-    return f"Scrolled {direction} ×{amount}"
+    return f"Desplazado {direction} ×{amount}"
 
 
 def _move(x: int, y: int, duration: float = 0.3) -> str:
     _require_pyautogui()
     pyautogui.moveTo(x, y, duration=duration)
-    return f"Mouse → ({x}, {y})"
+    return f"Ratón → ({x}, {y})"
 
 
 def _drag(x1: int, y1: int, x2: int, y2: int, duration: float = 0.5) -> str:
     _require_pyautogui()
     pyautogui.moveTo(x1, y1, duration=0.2)
     pyautogui.dragTo(x2, y2, duration=duration, button="left")
-    return f"Dragged ({x1},{y1}) → ({x2},{y2})"
+    return f"Arrastrado ({x1},{y1}) → ({x2},{y2})"
 
 
 def _clipboard_get() -> str:
@@ -225,7 +225,7 @@ def _clipboard_get() -> str:
         return pyperclip.paste()
     _hotkey("ctrl", "c")
     time.sleep(0.2)
-    return "(copied — pyperclip unavailable for read)"
+    return "(copiado — pyperclip no disponible para lectura)"
 
 
 def _clipboard_paste(text: str) -> str:
@@ -235,8 +235,8 @@ def _clipboard_paste(text: str) -> str:
         _require_pyautogui()
         paste_key = "command" if _get_os() == "mac" else "ctrl"
         pyautogui.hotkey(paste_key, "v")
-        return f"Pasted: {text[:60]}{'…' if len(text) > 60 else ''}"
-    return "pyperclip not available"
+        return f"Pegado: {text[:60]}{'…' if len(text) > 60 else ''}"
+    return "pyperclip no disponible"
 
 
 def _screenshot(save_path: str | None = None) -> str:
@@ -244,7 +244,7 @@ def _screenshot(save_path: str | None = None) -> str:
     path = _safe_screenshot_path(save_path)
     img  = pyautogui.screenshot()
     img.save(str(path))
-    return f"Screenshot saved: {path}"
+    return f"Captura de pantalla guardada: {path}"
 
 
 def _clear_field() -> str:
@@ -253,7 +253,7 @@ def _clear_field() -> str:
     pyautogui.hotkey(select_key, "a")
     time.sleep(0.1)
     pyautogui.press("delete")
-    return "Field cleared"
+    return "Campo borrado"
 
 def _focus_window(title: str) -> str:
     os_name = _get_os()
@@ -266,9 +266,9 @@ def _focus_window(title: str) -> str:
                 capture_output=True, timeout=5, **_WIN_HIDE,
             )
             time.sleep(0.3)
-            return f"Focused window: {title}"
+            return f"Ventana enfocada: {title}"
         except Exception as e:
-            return f"focus_window (Windows) failed: {e}"
+            return f"focus_window (Windows) falló: {e}"
 
     if os_name == "mac":
         script = (
@@ -281,9 +281,9 @@ def _focus_window(title: str) -> str:
                 capture_output=True, timeout=5,
             )
             time.sleep(0.3)
-            return f"Focused window: {title}"
+            return f"Ventana enfocada: {title}"
         except Exception as e:
-            return f"focus_window (macOS) failed: {e}"
+            return f"focus_window (macOS) falló: {e}"
 
     if os_name == "linux":
         try:
@@ -293,7 +293,7 @@ def _focus_window(title: str) -> str:
             )
             if result.returncode == 0:
                 time.sleep(0.3)
-                return f"Focused window: {title}"
+                return f"Ventana enfocada: {title}"
         except FileNotFoundError:
             pass
         try:
@@ -302,13 +302,13 @@ def _focus_window(title: str) -> str:
                 capture_output=True, timeout=5,
             )
             time.sleep(0.3)
-            return f"Focused window: {title}"
+            return f"Ventana enfocada: {title}"
         except FileNotFoundError:
-            return "focus_window (Linux) requires wmctrl or xdotool"
+            return "focus_window (Linux) requiere wmctrl o xdotool"
         except Exception as e:
-            return f"focus_window (Linux) failed: {e}"
+            return f"focus_window (Linux) falló: {e}"
 
-    return f"focus_window: unknown OS '{os_name}'"
+    return f"focus_window: SO desconocido '{os_name}'"
 
 def _screen_find(description: str) -> tuple[int, int] | None:
     try:
@@ -401,7 +401,7 @@ def computer_control(
     action = params.get("action", "").lower().strip()
 
     if not action:
-        return "No action specified for computer_control."
+        return "No se especificó ninguna acción para computer_control."
 
     if player:
         player.write_log(f"[Computer] {action}")
@@ -470,14 +470,14 @@ def computer_control(
             if coords:
                 time.sleep(0.2)
                 _click(x=coords[0], y=coords[1])
-                return f"Clicked '{desc}' at {coords}"
-            return f"Element not found on screen: '{desc}'"
+                return f"Clic en '{desc}' en {coords}"
+            return f"Elemento no encontrado en pantalla: '{desc}'"
 
         if action == "wait":
             secs = float(params.get("seconds", 1.0))
             secs = min(secs, 30.0)
             time.sleep(secs)
-            return f"Waited {secs}s"
+            return f"Esperado {secs}s"
 
         if action == "clear_field":
             return _clear_field()
@@ -500,8 +500,8 @@ def computer_control(
                 print(f"[ComputerControl] ⚠️ No '{field}' in memory, using random: {value}")
             return value
 
-        return f"Unknown action: '{action}'"
+        return f"Acción desconocida: '{action}'"
 
     except Exception as e:
         print(f"[ComputerControl] ❌ {action}: {e}")
-        return f"computer_control '{action}' failed: {e}"
+        return f"computer_control '{action}' falló: {e}"

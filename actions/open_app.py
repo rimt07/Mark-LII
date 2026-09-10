@@ -246,11 +246,11 @@ def open_app(
     app_name = (parameters or {}).get("app_name", "").strip()
 
     if not app_name:
-        return "No application name provided."
+        return "No se indicó ninguna aplicación."
 
     launcher = _OS_LAUNCHERS.get(_SYSTEM)
     if launcher is None:
-        return f"Unsupported operating system: {_SYSTEM}"
+        return f"Sistema operativo no compatible: {_SYSTEM}"
 
     normalized = _normalize(app_name)
     print(f"[open_app] Launching: '{app_name}' → '{normalized}' ({_SYSTEM})")
@@ -260,14 +260,14 @@ def open_app(
 
     try:
         if launcher(normalized):
-            return f"Opened {app_name}."
+            return f"Abrí {app_name}."
         if normalized.lower() != app_name.lower():
             if launcher(app_name):
-                return f"Opened {app_name}."
+                return f"Abrí {app_name}."
         return (
-            f"Could not confirm that {app_name} launched. "
-            f"It may still be loading, or it might not be installed."
+            f"No pude confirmar que {app_name} se abrió. "
+            f"Puede estar cargando o no estar instalada."
         )
     except Exception as e:
         print(f"[open_app] Error: {e}")
-        return f"Failed to open {app_name}: {e}"
+        return f"No pude abrir {app_name}: {e}"

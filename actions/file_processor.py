@@ -78,7 +78,7 @@ def _process_image(path: Path, action: str, params: dict, speak=None) -> str:
     try:
         from PIL import Image
     except ImportError:
-        return "Pillow is not installed. Run: pip install Pillow"
+        return "Pillow no está instalado. Ejecuta: pip install Pillow"
 
     action = action or "describe"
 
@@ -103,10 +103,10 @@ def _process_image(path: Path, action: str, params: dict, speak=None) -> str:
             if len(result) > 500 and params.get("save", True):
                 out = _output_path(path, "result", ".txt")
                 out.write_text(result, encoding="utf-8")
-                return f"{result[:300]}...\n\nFull result saved to: {out}"
+                return f"{result[:300]}...\n\nResultado completo guardado en: {out}"
             return result
         except Exception as e:
-            return f"AI image analysis failed: {e}"
+            return f"Análisis de imagen con IA falló: {e}"
 
     if action == "resize":
         width  = int(params.get("width",  0))
@@ -124,12 +124,12 @@ def _process_image(path: Path, action: str, params: dict, speak=None) -> str:
             elif height:
                 new_size = (int(w * height / h), height)
             else:
-                return "Please specify width, height, or scale."
+                return "Especifica ancho, alto o escala."
             out = _output_path(path, f"resized_{new_size[0]}x{new_size[1]}")
             img.resize(new_size, Image.LANCZOS).save(out)
-            return f"Resized from {w}x{h} to {new_size[0]}x{new_size[1]}. Saved: {out.name}"
+            return f"Redimensionado de {w}x{h} a {new_size[0]}x{new_size[1]}. Guardado: {out.name}"
         except Exception as e:
-            return f"Resize failed: {e}"
+            return f"Redimensionado falló: {e}"
 
     if action == "convert":
         fmt = params.get("format", "png").lower().strip(".")
@@ -140,9 +140,9 @@ def _process_image(path: Path, action: str, params: dict, speak=None) -> str:
             img = Image.open(path).convert("RGB") if fmt == "jpg" else Image.open(path)
             out = _output_path(path, "converted", f".{fmt}")
             img.save(out, pil_fmt)
-            return f"Converted to {fmt.upper()}. Saved: {out.name}"
+            return f"Convertido a {fmt.upper()}. Guardado: {out.name}"
         except Exception as e:
-            return f"Convert failed: {e}"
+            return f"Conversión falló: {e}"
 
     if action == "compress":
         quality = int(params.get("quality", 70))
@@ -152,17 +152,17 @@ def _process_image(path: Path, action: str, params: dict, speak=None) -> str:
             img.save(out, "JPEG", quality=quality, optimize=True)
             before = _file_size_str(path)
             after  = _file_size_str(out)
-            return f"Compressed: {before} → {after}. Saved: {out.name}"
+            return f"Comprimido: {before} → {after}. Guardado: {out.name}"
         except Exception as e:
-            return f"Compress failed: {e}"
+            return f"Compresión falló: {e}"
 
     if action == "info":
         try:
             img = Image.open(path)
-            return (f"Image info: {img.format}, {img.size[0]}x{img.size[1]}px, "
-                    f"mode: {img.mode}, size: {_file_size_str(path)}")
+            return (f"Info de imagen: {img.format}, {img.size[0]}x{img.size[1]}px, "
+                    f"modo: {img.mode}, tamaño: {_file_size_str(path)}")
         except Exception as e:
-            return f"Info failed: {e}"
+            return f"Info falló: {e}"
 
     return _process_image(path, "describe", {"instruction": f"{action}: {params}"})
 
@@ -190,12 +190,12 @@ def _process_pdf(path: Path, action: str, params: dict, speak=None) -> str:
     if action in ("summarize", "extract_text", "translate_hint", "analyze", "reformat"):
         text = _extract_pdf_text()
         if not text.strip():
-            return "Could not extract text from PDF (may be scanned/image-based)."
+            return "No se pudo extraer texto del PDF (puede ser escaneado o basado en imágenes)."
 
         if action == "extract_text":
             out = _output_path(path, "text", ".txt")
             out.write_text(text, encoding="utf-8")
-            return f"Text extracted ({len(text)} chars). Saved: {out.name}"
+            return f"Texto extraído ({len(text)} caracteres). Guardado: {out.name}"
 
         prompt_map = {
             "summarize":      f"Summarize this PDF document concisely:\n\n{text}",
@@ -210,24 +210,24 @@ def _process_pdf(path: Path, action: str, params: dict, speak=None) -> str:
             if len(result) > 600 and params.get("save", True):
                 out = _output_path(path, action, ".txt")
                 out.write_text(result, encoding="utf-8")
-                return f"{result[:400]}...\n\nFull result saved: {out.name}"
+                return f"{result[:400]}...\n\nResultado completo guardado: {out.name}"
             return result
         except Exception as e:
-            return f"AI analysis failed: {e}"
+            return f"Análisis con IA falló: {e}"
 
     if action == "info":
         try:
             import pdfplumber
             with pdfplumber.open(path) as pdf:
                 pages = len(pdf.pages)
-            return f"PDF: {pages} pages, size: {_file_size_str(path)}"
+            return f"PDF: {pages} páginas, tamaño: {_file_size_str(path)}"
         except Exception:
-            return f"PDF size: {_file_size_str(path)}"
+            return f"Tamaño del PDF: {_file_size_str(path)}"
 
     if action == "to_word":
         text = _extract_pdf_text()
         if not text:
-            return "Could not extract text to convert."
+            return "No se pudo extraer texto para convertir."
         try:
             from docx import Document
             doc  = Document()
@@ -237,11 +237,11 @@ def _process_pdf(path: Path, action: str, params: dict, speak=None) -> str:
                     doc.add_paragraph(para.strip())
             out = _output_path(path, "converted", ".docx")
             doc.save(out)
-            return f"Converted to Word document. Saved: {out.name}"
+            return f"Convertido a documento Word. Guardado: {out.name}"
         except ImportError:
-            return "python-docx not installed. Run: pip install python-docx"
+            return "python-docx no está instalado. Ejecuta: pip install python-docx"
 
-    return f"Unknown PDF action: '{action}'. Try: summarize, extract_text, info, to_word"
+    return f"Acción PDF desconocida: '{action}'. Prueba: summarize, extract_text, info, to_word"
 
 def _process_text_doc(path: Path, file_type: str, action: str,
                        params: dict, speak=None) -> str:
@@ -254,27 +254,27 @@ def _process_text_doc(path: Path, file_type: str, action: str,
                 doc  = Document(path)
                 return "\n".join(p.text for p in doc.paragraphs)
             except ImportError:
-                return "python-docx not installed."
+                return "python-docx no está instalado."
             except Exception as e:
-                return f"Read failed: {e}"
+                return f"Lectura falló: {e}"
         else:
             return path.read_text(encoding="utf-8", errors="ignore")
 
     content = _read_content()
     if not content.strip():
-        return "File appears to be empty."
+        return "El archivo parece estar vacío."
 
     if action == "word_count":
         words = len(content.split())
         chars = len(content)
         lines = content.count("\n")
-        return f"Word count: {words} words, {chars} characters, {lines} lines."
+        return f"Conteo: {words} palabras, {chars} caracteres, {lines} líneas."
 
     if action == "extract_text":
         if file_type != "txt":
             out = _output_path(path, "extracted", ".txt")
             out.write_text(content, encoding="utf-8")
-            return f"Text extracted. Saved: {out.name}"
+            return f"Texto extraído. Guardado: {out.name}"
         return content[:2000]
 
     instruction = params.get("instruction", "")
@@ -300,10 +300,10 @@ def _process_text_doc(path: Path, file_type: str, action: str,
         if len(result) > 600 and params.get("save", True):
             out = _output_path(path, action, ".txt")
             out.write_text(result, encoding="utf-8")
-            return f"{result[:400]}...\n\nFull result saved: {out.name}"
+            return f"{result[:400]}...\n\nResultado completo guardado: {out.name}"
         return result
     except Exception as e:
-        return f"AI processing failed: {e}"
+        return f"Procesamiento con IA falló: {e}"
 
 
 def _process_data(path: Path, file_type: str, action: str,
@@ -311,7 +311,7 @@ def _process_data(path: Path, file_type: str, action: str,
     try:
         import pandas as pd
     except ImportError:
-        return "pandas not installed. Run: pip install pandas openpyxl"
+        return "pandas no está instalado. Ejecuta: pip install pandas openpyxl"
 
     action = action or "analyze"
 
@@ -321,19 +321,19 @@ def _process_data(path: Path, file_type: str, action: str,
         else:
             df = pd.read_excel(path)
     except Exception as e:
-        return f"Could not read file: {e}"
+        return f"No se pudo leer el archivo: {e}"
 
     if action == "info":
-        return (f"Rows: {len(df)}, Columns: {len(df.columns)}\n"
-                f"Columns: {', '.join(df.columns.tolist())}\n"
-                f"Size: {_file_size_str(path)}")
+        return (f"Filas: {len(df)}, Columnas: {len(df.columns)}\n"
+                f"Columnas: {', '.join(df.columns.tolist())}\n"
+                f"Tamaño: {_file_size_str(path)}")
 
     if action == "stats":
         try:
             desc = df.describe(include="all").to_string()
-            return f"Statistics:\n{desc[:2000]}"
+            return f"Estadísticas:\n{desc[:2000]}"
         except Exception as e:
-            return f"Stats failed: {e}"
+            return f"Estadísticas fallaron: {e}"
 
     if action == "analyze":
         preview = df.head(50).to_string()
@@ -345,7 +345,7 @@ def _process_data(path: Path, file_type: str, action: str,
             response = model.generate_content(prompt)
             return response.text.strip()
         except Exception as e:
-            return f"AI analysis failed: {e}"
+            return f"Análisis con IA falló: {e}"
 
     if action in ("convert", "to_csv", "to_excel", "to_json"):
         fmt = {"to_csv": "csv", "to_excel": "xlsx", "to_json": "json",
@@ -360,16 +360,16 @@ def _process_data(path: Path, file_type: str, action: str,
             elif fmt == "json":
                 out = _output_path(path, "converted", ".json")
                 df.to_json(out, orient="records", force_ascii=False, indent=2)
-            return f"Converted to {fmt.upper()}. Saved: {out.name}"
+            return f"Convertido a {fmt.upper()}. Guardado: {out.name}"
         except Exception as e:
-            return f"Convert failed: {e}"
+            return f"Conversión falló: {e}"
 
     if action == "filter":
         col       = params.get("column", "")
         value     = params.get("value", "")
         condition = params.get("condition", "equals")
         if not col or col not in df.columns:
-            return f"Column '{col}' not found. Available: {', '.join(df.columns)}"
+            return f"Columna '{col}' no encontrada. Disponibles: {', '.join(df.columns)}"
         try:
             if condition == "equals":     filtered = df[df[col] == value]
             elif condition == "contains": filtered = df[df[col].astype(str).str.contains(str(value), case=False)]
@@ -378,9 +378,9 @@ def _process_data(path: Path, file_type: str, action: str,
             else:                         filtered = df[df[col] == value]
             out = _output_path(path, "filtered", ".csv")
             filtered.to_csv(out, index=False)
-            return f"Filtered: {len(filtered)} rows match. Saved: {out.name}"
+            return f"Filtrado: {len(filtered)} filas coinciden. Guardado: {out.name}"
         except Exception as e:
-            return f"Filter failed: {e}"
+            return f"Filtrado falló: {e}"
 
     if action == "sort":
         col = params.get("column", df.columns[0])
@@ -389,9 +389,9 @@ def _process_data(path: Path, file_type: str, action: str,
             sorted_df = df.sort_values(col, ascending=asc)
             out = _output_path(path, "sorted", path.suffix)
             sorted_df.to_csv(out, index=False)
-            return f"Sorted by '{col}'. Saved: {out.name}"
+            return f"Ordenado por '{col}'. Guardado: {out.name}"
         except Exception as e:
-            return f"Sort failed: {e}"
+            return f"Ordenamiento falló: {e}"
 
     preview = df.head(30).to_string()
     try:
@@ -401,7 +401,7 @@ def _process_data(path: Path, file_type: str, action: str,
         )
         return response.text.strip()
     except Exception as e:
-        return f"Processing failed: {e}"
+        return f"Procesamiento falló: {e}"
 
 
 def _process_json(path: Path, action: str, params: dict, speak=None) -> str:
@@ -410,15 +410,15 @@ def _process_json(path: Path, action: str, params: dict, speak=None) -> str:
         content = path.read_text(encoding="utf-8")
         data    = json.loads(content)
     except Exception as e:
-        return f"Invalid JSON: {e}"
+        return f"JSON inválido: {e}"
 
     if action == "validate":
-        return f"Valid JSON. Type: {type(data).__name__}, size: {_file_size_str(path)}"
+        return f"JSON válido. Tipo: {type(data).__name__}, tamaño: {_file_size_str(path)}"
 
     if action == "format":
         out = _output_path(path, "formatted", ".json")
         out.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-        return f"Formatted JSON saved: {out.name}"
+        return f"JSON formateado guardado: {out.name}"
 
     if action in ("analyze", "summarize", "extract"):
         preview = json.dumps(data, indent=2, ensure_ascii=False)[:8000]
@@ -430,7 +430,7 @@ def _process_json(path: Path, action: str, params: dict, speak=None) -> str:
             response = model.generate_content(prompt)
             return response.text.strip()
         except Exception as e:
-            return f"AI processing failed: {e}"
+            return f"Procesamiento con IA falló: {e}"
 
     if action == "to_csv":
         try:
@@ -439,10 +439,10 @@ def _process_json(path: Path, action: str, params: dict, speak=None) -> str:
                 df  = pd.DataFrame(data)
                 out = _output_path(path, "converted", ".csv")
                 df.to_csv(out, index=False)
-                return f"Converted to CSV. Saved: {out.name}"
-            return "JSON must be an array of objects to convert to CSV."
+                return f"Convertido a CSV. Guardado: {out.name}"
+            return "El JSON debe ser un arreglo de objetos para convertir a CSV."
         except ImportError:
-            return "pandas not installed."
+            return "pandas no está instalado."
 
     return _process_json(path, "analyze", {"instruction": action})
 
@@ -459,17 +459,17 @@ def _process_code(path: Path, action: str, params: dict, speak=None) -> str:
                     capture_output=True, text=True, timeout=30
                 )
                 out = result.stdout or result.stderr
-                return f"Output:\n{out[:2000]}" if out else "No output."
+                return f"Salida:\n{out[:2000]}" if out else "Sin salida."
             except subprocess.TimeoutExpired:
-                return "Execution timed out (30s)."
+                return "Ejecución agotó el tiempo (30s)."
             except Exception as e:
-                return f"Run failed: {e}"
-        return f"Direct execution not supported for .{ext} files."
+                return f"Ejecución falló: {e}"
+        return f"Ejecución directa no soportada para archivos .{ext}."
 
     if action == "info":
         lines = content.count("\n")
         words = len(content.split())
-        return f"Code file: {lines} lines, {words} words, {_file_size_str(path)}"
+        return f"Archivo de código: {lines} líneas, {words} palabras, {_file_size_str(path)}"
 
     prompt_map = {
         "explain":   f"Explain this {ext} code clearly:\n\n```{ext}\n{content[:30000]}\n```",
@@ -499,10 +499,10 @@ def _process_code(path: Path, action: str, params: dict, speak=None) -> str:
             code_match = re.search(r"```(?:\w+)?\n(.*?)```", result, re.DOTALL)
             code_to_save = code_match.group(1) if code_match else result
             out.write_text(code_to_save, encoding="utf-8")
-            return f"{result[:400]}...\n\nSaved: {out.name}"
+            return f"{result[:400]}...\n\nGuardado: {out.name}"
         return result
     except Exception as e:
-        return f"AI processing failed: {e}"
+        return f"Procesamiento con IA falló: {e}"
 
 def _process_audio(path: Path, action: str, params: dict, speak=None) -> str:
     action = action or "transcribe"
@@ -514,13 +514,13 @@ def _process_audio(path: Path, action: str, params: dict, speak=None) -> str:
             duration = len(audio) / 1000
             mins, secs = divmod(int(duration), 60)
             return (f"Audio: {mins}m {secs}s, "
-                    f"{audio.channels} ch, "
+                    f"{audio.channels} canales, "
                     f"{audio.frame_rate}Hz, "
                     f"{_file_size_str(path)}")
         except ImportError:
-            return f"Audio file: {_file_size_str(path)} (install pydub for more info)"
+            return f"Archivo de audio: {_file_size_str(path)} (instala pydub para más info)"
         except Exception as e:
-            return f"Info failed: {e}"
+            return f"Info falló: {e}"
 
     if action == "transcribe":
         try:
@@ -539,10 +539,10 @@ def _process_audio(path: Path, action: str, params: dict, speak=None) -> str:
             if params.get("save", True):
                 out = _output_path(path, "transcript", ".txt")
                 out.write_text(result, encoding="utf-8")
-                return f"Transcription saved: {out.name}\n\nPreview: {result[:300]}"
+                return f"Transcripción guardada: {out.name}\n\nVista previa: {result[:300]}"
             return result
         except Exception as e:
-            return f"Transcription failed: {e}"
+            return f"Transcripción falló: {e}"
 
     if action == "convert":
         fmt = params.get("format", "mp3").lstrip(".")
@@ -551,11 +551,11 @@ def _process_audio(path: Path, action: str, params: dict, speak=None) -> str:
             audio = AudioSegment.from_file(path)
             out   = _output_path(path, "converted", f".{fmt}")
             audio.export(out, format=fmt)
-            return f"Converted to {fmt.upper()}. Saved: {out.name}"
+            return f"Convertido a {fmt.upper()}. Guardado: {out.name}"
         except ImportError:
-            return "pydub not installed. Run: pip install pydub"
+            return "pydub no está instalado. Ejecuta: pip install pydub"
         except Exception as e:
-            return f"Convert failed: {e}"
+            return f"Conversión falló: {e}"
 
     if action == "trim":
         start = float(params.get("start", 0))
@@ -567,13 +567,13 @@ def _process_audio(path: Path, action: str, params: dict, speak=None) -> str:
             trimmed = audio[int(start * 1000):end_ms]
             out     = _output_path(path, f"trim_{int(start)}s_{int(end)}s")
             trimmed.export(out, format=path.suffix.lstrip("."))
-            return f"Trimmed audio ({int(start)}s–{int(end)}s). Saved: {out.name}"
+            return f"Audio recortado ({int(start)}s–{int(end)}s). Guardado: {out.name}"
         except ImportError:
-            return "pydub not installed."
+            return "pydub no está instalado."
         except Exception as e:
-            return f"Trim failed: {e}"
+            return f"Recorte falló: {e}"
 
-    return f"Unknown audio action: '{action}'. Try: transcribe, info, convert, trim"
+    return f"Acción de audio desconocida: '{action}'. Prueba: transcribe, info, convert, trim"
 
 def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
     action = action or "info"
@@ -605,26 +605,26 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
             fps      = video_s.get("r_frame_rate", "?")
             return f"Video: {mins}m {secs}s, {w}x{h}, {fps} fps, {size}"
         except Exception:
-            return f"Video file: {_file_size_str(path)}"
+            return f"Archivo de video: {_file_size_str(path)}"
 
     if action == "extract_audio":
         if not _ffmpeg_available():
-            return "ffmpeg not found. Install ffmpeg to extract audio."
+            return "ffmpeg no encontrado. Instala ffmpeg para extraer audio."
         out = _output_path(path, "audio", ".mp3")
         try:
             subprocess.run(
                 ["ffmpeg", "-i", str(path), "-q:a", "0", "-map", "a", str(out), "-y"],
                 capture_output=True, timeout=300
             )
-            return f"Audio extracted. Saved: {out.name}"
+            return f"Audio extraído. Guardado: {out.name}"
         except Exception as e:
-            return f"Extract audio failed: {e}"
+            return f"Extracción de audio falló: {e}"
 
     if action == "trim":
         start = params.get("start", "00:00:00")
         end   = params.get("end",   "")
         if not _ffmpeg_available():
-            return "ffmpeg not found."
+            return "ffmpeg no encontrado."
         out = _output_path(path, f"trim", path.suffix)
         try:
             cmd = ["ffmpeg", "-i", str(path), "-ss", str(start)]
@@ -632,14 +632,14 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
                 cmd += ["-to", str(end)]
             cmd += ["-c", "copy", str(out), "-y"]
             subprocess.run(cmd, capture_output=True, timeout=600)
-            return f"Trimmed video saved: {out.name}"
+            return f"Video recortado guardado: {out.name}"
         except Exception as e:
-            return f"Trim failed: {e}"
+            return f"Recorte falló: {e}"
 
     if action == "extract_frame":
         timestamp = params.get("timestamp", "00:00:01")
         if not _ffmpeg_available():
-            return "ffmpeg not found."
+            return "ffmpeg no encontrado."
         out = _output_path(path, f"frame_{timestamp.replace(':', '')}", ".jpg")
         try:
             subprocess.run(
@@ -647,14 +647,14 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
                  "-vframes", "1", str(out), "-y"],
                 capture_output=True, timeout=30
             )
-            return f"Frame extracted at {timestamp}. Saved: {out.name}"
+            return f"Fotograma extraído en {timestamp}. Guardado: {out.name}"
         except Exception as e:
-            return f"Extract frame failed: {e}"
+            return f"Extracción de fotograma falló: {e}"
 
     if action == "compress":
         crf = int(params.get("quality", 28))  
         if not _ffmpeg_available():
-            return "ffmpeg not found."
+            return "ffmpeg no encontrado."
         out = _output_path(path, f"compressed_crf{crf}", ".mp4")
         try:
             subprocess.run(
@@ -666,13 +666,13 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
             )
             before = _file_size_str(path)
             after  = _file_size_str(out)
-            return f"Compressed: {before} → {after}. Saved: {out.name}"
+            return f"Comprimido: {before} → {after}. Guardado: {out.name}"
         except Exception as e:
-            return f"Compress failed: {e}"
+            return f"Compresión falló: {e}"
 
     if action == "transcribe":
         if not _ffmpeg_available():
-            return "ffmpeg not found. Needed for video transcription."
+            return "ffmpeg no encontrado. Necesario para transcribir video."
         tmp_audio = Path(tempfile.mktemp(suffix=".mp3"))
         try:
             subprocess.run(
@@ -683,7 +683,7 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
             result = _process_audio(tmp_audio, "transcribe", params, speak)
             return result
         except Exception as e:
-            return f"Video transcription failed: {e}"
+            return f"Transcripción de video falló: {e}"
         finally:
             if tmp_audio.exists():
                 tmp_audio.unlink()
@@ -691,18 +691,18 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
     if action == "convert":
         fmt = params.get("format", "mp4").lstrip(".")
         if not _ffmpeg_available():
-            return "ffmpeg not found."
+            return "ffmpeg no encontrado."
         out = _output_path(path, "converted", f".{fmt}")
         try:
             subprocess.run(
                 ["ffmpeg", "-i", str(path), str(out), "-y"],
                 capture_output=True, timeout=1800
             )
-            return f"Converted to {fmt.upper()}. Saved: {out.name}"
+            return f"Convertido a {fmt.upper()}. Guardado: {out.name}"
         except Exception as e:
-            return f"Convert failed: {e}"
+            return f"Conversión falló: {e}"
 
-    return f"Unknown video action: '{action}'. Try: info, trim, extract_audio, extract_frame, compress, transcribe, convert"
+    return f"Acción de video desconocida: '{action}'. Prueba: info, trim, extract_audio, extract_frame, compress, transcribe, convert"
 
 def _process_archive(path: Path, action: str, params: dict, speak=None) -> str:
     action = action or "list"
@@ -718,23 +718,23 @@ def _process_archive(path: Path, action: str, params: dict, speak=None) -> str:
                 with tarfile.open(path) as t:
                     names = t.getnames()
             else:
-                return f"Unsupported archive format: {ext}"
+                return f"Formato de archivo comprimido no soportado: {ext}"
             preview = "\n".join(names[:30])
-            suffix  = f"\n... and {len(names)-30} more" if len(names) > 30 else ""
-            return f"Archive contains {len(names)} files:\n{preview}{suffix}"
+            suffix  = f"\n... y {len(names)-30} más" if len(names) > 30 else ""
+            return f"El archivo contiene {len(names)} archivos:\n{preview}{suffix}"
         except Exception as e:
-            return f"List failed: {e}"
+            return f"Listado falló: {e}"
 
     if action == "extract":
         dest = Path(params.get("destination", str(path.parent / path.stem)))
         dest.mkdir(parents=True, exist_ok=True)
         try:
             shutil.unpack_archive(path, dest)
-            return f"Extracted to: {dest}"
+            return f"Extraído en: {dest}"
         except Exception as e:
-            return f"Extract failed: {e}"
+            return f"Extracción falló: {e}"
 
-    return f"Unknown archive action: '{action}'. Try: list, extract"
+    return f"Acción de archivo comprimido desconocida: '{action}'. Prueba: list, extract"
 
 def _process_pptx(path: Path, action: str, params: dict, speak=None) -> str:
     action = action or "summarize"
@@ -745,41 +745,41 @@ def _process_pptx(path: Path, action: str, params: dict, speak=None) -> str:
             prs  = Presentation(path)
             text = []
             for i, slide in enumerate(prs.slides, 1):
-                slide_text = f"\n--- Slide {i} ---\n"
+                slide_text = f"\n--- Diapositiva {i} ---\n"
                 for shape in slide.shapes:
                     if hasattr(shape, "text") and shape.text.strip():
                         slide_text += shape.text.strip() + "\n"
                 text.append(slide_text)
             return "\n".join(text)
         except ImportError:
-            return "python-pptx not installed."
+            return "python-pptx no está instalado."
 
     if action in ("summarize", "extract_text", "analyze"):
         text = _read_pptx_text()
         if action == "extract_text":
             out = _output_path(path, "text", ".txt")
             out.write_text(text, encoding="utf-8")
-            return f"Text extracted. Saved: {out.name}"
+            return f"Texto extraído. Guardado: {out.name}"
         try:
             model    = _gemini_client()
             prompt   = f"{'Summarize' if action == 'summarize' else 'Analyze'} this presentation:\n{text[:30000]}"
             response = model.generate_content(prompt)
             return response.text.strip()
         except Exception as e:
-            return f"AI processing failed: {e}"
+            return f"Procesamiento con IA falló: {e}"
 
-    return f"Unknown PPTX action: '{action}'. Try: summarize, extract_text, analyze"
+    return f"Acción PPTX desconocida: '{action}'. Prueba: summarize, extract_text, analyze"
 
 def file_processor(parameters: dict, player=None, speak=None) -> str:
     file_path_str = parameters.get("file_path", "").strip()
     if not file_path_str:
-        return "No file path provided."
+        return "No se proporcionó ruta de archivo."
 
     path = Path(file_path_str)
     if not path.exists():
-        return f"File not found: {file_path_str}"
+        return f"Archivo no encontrado: {file_path_str}"
     if not path.is_file():
-        return f"Path is not a file: {file_path_str}"
+        return f"La ruta no es un archivo: {file_path_str}"
 
     file_type   = _detect_type(path)
     action      = (parameters.get("action") or "").lower().strip()
@@ -799,7 +799,7 @@ def file_processor(parameters: dict, player=None, speak=None) -> str:
             response = model.generate_content(prompt)
             return response.text.strip()
         except Exception as e:
-            return f"Unknown file type ({path.suffix}). Could not process: {e}"
+            return f"Tipo de archivo desconocido ({path.suffix}). No se pudo procesar: {e}"
 
     dispatch = {
         "image":   _process_image,
@@ -819,12 +819,12 @@ def file_processor(parameters: dict, player=None, speak=None) -> str:
 
     handler = dispatch.get(file_type)
     if not handler:
-        return f"Unsupported file type: {file_type}"
+        return f"Tipo de archivo no soportado: {file_type}"
 
     try:
         result = handler(path, action, params, speak)
-        return result or "Done."
+        return result or "Listo."
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return f"Processing failed: {e}"
+        return f"Procesamiento falló: {e}"

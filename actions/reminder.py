@@ -296,15 +296,15 @@ def reminder(
     message  = parameters.get("message", "Reminder").strip()
 
     if not date_str or not time_str:
-        return "I need both a date and a time to set a reminder."
+        return "Necesito fecha y hora para crear el recordatorio."
 
     try:
         target_dt = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
     except ValueError:
-        return "I couldn't parse that date or time. Please use YYYY-MM-DD and HH:MM."
+        return "No pude interpretar la fecha u hora. Usa YYYY-MM-DD y HH:MM."
 
     if target_dt <= datetime.now():
-        return "That time has already passed — I can't set a reminder in the past."
+        return "Esa hora ya pasó; no puedo programar un recordatorio en el pasado."
 
     os_name    = _get_os()
     safe_msg   = _sanitise(message)
@@ -313,7 +313,7 @@ def reminder(
     try:
         script_path = _write_notify_script(task_name, safe_msg, os_name)
     except Exception as e:
-        return f"Could not prepare the reminder script: {e}"
+        return f"No pude preparar el script del recordatorio: {e}"
 
     try:
         if os_name == "windows":
@@ -325,13 +325,13 @@ def reminder(
     except Exception as e:
         script_path.unlink(missing_ok=True)
         print(f"[Reminder] ❌ Scheduling exception: {e}")
-        return "Something went wrong while scheduling the reminder."
+        return "Algo falló al programar el recordatorio."
 
     if not job_id:
-        return "I couldn't register the reminder with the system scheduler."
+        return "No pude registrar el recordatorio en el planificador del sistema."
 
     if player:
         player.write_log(f"[Reminder] ✅ {date_str} {time_str} — {safe_msg[:40]}")
 
     friendly_time = target_dt.strftime("%B %d at %I:%M %p")
-    return f"Reminder set for {friendly_time}."
+    return f"Recordatorio programado para el {friendly_time}."

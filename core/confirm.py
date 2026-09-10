@@ -90,8 +90,8 @@ def request(key: str, title: str, detail: str, run: Callable[[], str]) -> str:
     if _show_cb is None:
         # No interface bound (headless, or a very early call). Refuse rather
         # than silently performing something irreversible.
-        return (f"I cannot confirm '{title}' right now because the interface is "
-                f"not available, so I have not done it.")
+        return (f"No puedo confirmar '{title}' ahora porque la interfaz no está "
+                f"disponible; no lo he hecho.")
 
     with _lock:
         _pending = _Pending(key=key, title=title, detail=detail,
@@ -102,13 +102,13 @@ def request(key: str, title: str, detail: str, run: Callable[[], str]) -> str:
     except Exception as e:
         with _lock:
             _pending = None
-        return f"Could not ask for confirmation: {e}. Nothing was done."
+        return f"No pude pedir confirmación: {e}. No se hizo nada."
 
     _log(f"SYS: Awaiting confirmation — {title}")
     return (
-        f"[CONFIRMATION_PENDING] I have put a confirmation on screen for: {title}. "
-        f"Say ONE short sentence in the user's own language telling them you need "
-        f"them to confirm it on the HUD before you do it. Do not claim it is done."
+        f"[CONFIRMATION_PENDING] Hay una confirmación en pantalla para: {title}. "
+        f"Di UNA frase corta en español pidiendo que la confirmen en el HUD "
+        f"antes de hacerlo. No digas que ya está hecho."
     )
 
 
@@ -142,7 +142,7 @@ def resolve(accepted: bool) -> None:
 
     def _worker():
         try:
-            result = p.run() or "Done."
+            result = p.run() or "Hecho."
             _log(f"SYS: Confirmed — {p.title}. {result}")
         except Exception as e:
             _log(f"ERR: {p.title} failed — {e}")

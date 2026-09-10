@@ -72,6 +72,9 @@ def _get_base_dir() -> Path:
 BASE_DIR        = _get_base_dir()
 API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 
+# All search/news output is requested and formatted in Spanish.
+_GEMINI_ES_SUFFIX = " Responde siempre en español."
+
 
 def _get_api_key() -> str:
     with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
@@ -92,7 +95,7 @@ def _gemini_search(query: str) -> str:
     try:
         response = client.models.generate_content(
             model="gemini-flash-latest",
-            contents=query,
+            contents=f"{query}{_GEMINI_ES_SUFFIX}",
             config={"tools": [{"google_search": {}}]},
         )
     except Exception as e:
@@ -170,22 +173,22 @@ def _ddg_news(query: str, max_results: int = 8) -> list[dict]:
 
 def _format_ddg(query: str, results: list[dict]) -> str:
     if not results:
-        return f"No results found for: {query}"
+        return f"No se encontraron resultados para: {query}"
 
-    lines = [f"Search results for: {query}\n"]
+    lines = [f"Resultados de búsqueda: {query}\n"]
     for i, r in enumerate(results, 1):
         if r.get("title"):   lines.append(f"{i}. {r['title']}")
         if r.get("snippet"): lines.append(f"   {r['snippet']}")
-        if r.get("url"):     lines.append(f"   Source: {r['url']}")
+        if r.get("url"):     lines.append(f"   Fuente: {r['url']}")
         lines.append("")
     return "\n".join(lines).strip()
 
 
 def _format_news(query: str, results: list[dict]) -> str:
     if not results:
-        return f"No news found for: {query}"
+        return f"No se encontraron noticias para: {query}"
 
-    lines = [f"Latest news: {query}\n"]
+    lines = [f"Últimas noticias: {query}\n"]
     for i, r in enumerate(results, 1):
         title = r.get("title", "")
         if not title:
@@ -220,7 +223,10 @@ def _gemini_headlines(n: int = 5) -> tuple[list[str], str]:
     client = genai.Client(api_key=_get_api_key())
     response = client.models.generate_content(
         model="gemini-flash-latest",
-        contents=f"Current world news: {n} headlines. Numbered list, titles only.",
+        contents=(
+            f"Noticias mundiales actuales: {n} titulares. "
+            f"Lista numerada, solo títulos, en español.{_GEMINI_ES_SUFFIX}"
+        ),
         config={"tools": [{"google_search": {}}]},
     )
 
@@ -272,14 +278,16 @@ def _news(query: str) -> str:
     exactly what the briefing wants, so it goes first and Gemini is only touched
     when DDG comes back empty.
     """
-    gemini_query = f"latest news today: {query}" if query else "top world news today"
-    ddg_query    = query if query else "world news today"
+    gemini_query = (
+        f"últimas noticias de hoy: {query}" if query else "principales noticias del mundo hoy"
+    )
+    ddg_query    = query if query else "noticias mundiales hoy"
 
     def _ddg_attempt() -> str:
         return _format_news(ddg_query, _ddg_news(ddg_query, max_results=8))
 
     text = _run_bounded(_ddg_attempt, timeout=5.0, label="DDG news")
-    if text and len(text) > 60 and not text.startswith("No news found"):
+    if text and len(text) > 60 and not text.startswith("No se encontraron noticias"):
         return text
 
     text = _run_bounded(
@@ -288,7 +296,7 @@ def _news(query: str) -> str:
     if text and len(text) > 60:
         return text
 
-    return f"No news found for: {query}"
+    return f"No se encontraron noticias para: {query}"
 
 
 def _research(query: str) -> str:
@@ -297,8 +305,8 @@ def _research(query: str) -> str:
     Falls back to a wider DDG fetch.
     """
     research_query = (
-        f"Comprehensive, detailed explanation of: {query}. "
-        "Include background context, key facts, current state, and important nuances."
+        f"Explicación completa y detallada de: {query}. "
+        "Incluye contexto, datos clave, estado actual y matices importantes."
     )
     try:
         return _gemini_search(research_query)
@@ -310,7 +318,7 @@ def _research(query: str) -> str:
 
 def _price(query: str) -> str:
     """Product price lookup — searches for current market prices."""
-    price_query = f"current price of {query} — how much does it cost today"
+    price_query = f"precio actual de {query} — cuánto cuesta hoy"
     try:
         return _gemini_search(price_query)
     except Exception as e:
@@ -321,8 +329,8 @@ def _price(query: str) -> str:
 
 def _compare(items: list[str], aspect: str) -> str:
     query = (
-        f"Compare {', '.join(items)} in terms of {aspect}. "
-        "Give specific facts and data."
+        f"Compara {', '.join(items)} en cuanto a {aspect}. "
+        "Da datos y hechos concretos."
     )
     try:
         return _gemini_search(query)
@@ -336,7 +344,7 @@ def _compare(items: list[str], aspect: str) -> str:
         except Exception:
             all_results[item] = []
 
-    lines = [f"Comparison — {aspect.upper()}", "─" * 40]
+    lines = [f"Comparación — {aspect.upper()}", "─" * 40]
     for item in items:
         lines.append(f"\n▸ {item}")
         for r in all_results.get(item, [])[:2]:
@@ -362,7 +370,7 @@ def web_search(
     aspect = params.get("aspect", "general").strip() or "general"
 
     if not query and not items:
-        return "Please provide a search query."
+        return "Indica qué quieres buscar."
 
     if items and mode not in ("compare",):
         mode = "compare"
@@ -385,4 +393,4 @@ def web_search(
 
     except Exception as e:
         print(f"[WebSearch] ❌ All backends failed: {e}")
-        return f"Search failed: {e}"
+        return f"Error en la búsqueda: {e}"

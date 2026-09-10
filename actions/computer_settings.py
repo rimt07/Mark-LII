@@ -670,16 +670,16 @@ ACTION_MAP: dict[str, callable] = {
 # Asking before every action is what makes an assistant unusable, and every
 # question costs a round trip. Undo is both faster and safer than a prompt.
 _IRREVERSIBLE = {
-    "restart":     ("Restart this computer",
-                    "Anything unsaved will be lost. The computer restarts in 10 seconds."),
-    "shutdown":    ("Shut this computer down",
-                    "Anything unsaved will be lost. The computer powers off in 10 seconds."),
+    "restart":     ("Reiniciar este equipo",
+                    "Se perderá cualquier cambio sin guardar. El equipo se reiniciará en 10 segundos."),
+    "shutdown":    ("Apagar este equipo",
+                    "Se perderá cualquier cambio sin guardar. El equipo se apagará en 10 segundos."),
     # Not obviously destructive, and that is exactly why it was missed: turning
     # the WiFi off cuts the assistant's own connection to the Live API, so it
     # cannot be asked to turn it back on.
-    "toggle_wifi": ("Switch WiFi off or on",
-                    "If this switches WiFi off, JARVIS loses its connection and "
-                    "cannot switch it back on by voice."),
+    "toggle_wifi": ("Activar o desactivar el WiFi",
+                    "Si se desactiva el WiFi, JARVIS perderá su conexión y "
+                    "no podrá reactivarlo por voz."),
 }
 
 # Kept so anything still importing the old name keeps working.
@@ -778,8 +778,8 @@ def _suggest(description: str) -> str:
     near = difflib.get_close_matches(_normalise(description),
                                      sorted(ACTION_MAP), n=5, cutoff=0.3)
     hint = ", ".join(near) if near else ", ".join(sorted(ACTION_MAP)[:12])
-    return (f"I could not match '{description}' to a computer action. "
-            f"Call computer_settings again with an exact `action` from: {hint}.")
+    return (f"No pude relacionar '{description}' con ninguna acción del equipo. "
+            f"Vuelve a llamar a computer_settings con un `action` exacto de: {hint}.")
 
 def computer_settings(
     parameters: dict = None,
@@ -788,7 +788,7 @@ def computer_settings(
     session_memory=None,
 ) -> str:
     if not _PYAUTOGUI:
-        return "pyautogui is not installed. Run: pip install pyautogui"
+        return "pyautogui no está instalado. Ejecuta: pip install pyautogui"
 
     params      = parameters or {}
     raw_action  = params.get("action", "").strip()
@@ -819,13 +819,13 @@ def computer_settings(
         title, detail = _IRREVERSIBLE[action]
         func = ACTION_MAP.get(action)
         if func is None:
-            return f"Unknown action: '{raw_action}'."
+            return f"Acción desconocida: '{raw_action}'."
         if confirm.pending_title():
-            return ("There is already a confirmation waiting on screen. "
-                    "Ask the user to answer that one first.")
+            return ("Ya hay una confirmación pendiente en pantalla. "
+                    "Pide al usuario que responda primero a esa.")
         return confirm.request(
             key=action, title=title, detail=detail,
-            run=lambda f=func, a=action: (f(), f"{a} done.")[1],
+            run=lambda f=func, a=action: (f(), f"{a} completado.")[1],
         )
 
     if action == "volume_set":
@@ -835,40 +835,41 @@ def computer_settings(
             volume_set(target)
             if before is not None:
                 push_undo(f"volume {before}% → {target}%",
-                          lambda b=before: (volume_set(b), f"Back to {b}%.")[1])
-            return f"Volume set to {target}%."
+                          lambda b=before: (volume_set(b), f"Volumen restaurado a {b}%.")[1])
+            return f"Volumen ajustado a {target}%."
         except Exception as e:
-            return f"Could not set volume: {e}"
+            return f"No se pudo ajustar el volumen: {e}"
 
     if action in ("type_text", "write_on_screen", "type", "write"):
         text = str(value or params.get("text", "")).strip()
         if not text:
-            return "No text provided to type."
+            return "No se proporcionó texto para escribir."
         enter_after = str(params.get("press_enter", "false")).lower() in ("true", "1", "yes")
         type_text(text, press_enter_after=enter_after)
-        return f"Typed: {text[:80]}"
+        return f"Escrito: {text[:80]}"
 
     if action == "press_key":
         key = str(value or params.get("key", "")).strip()
         if not key:
-            return "No key specified."
+            return "No se especificó ninguna tecla."
         press_key(key)
-        return f"Pressed: {key}"
+        return f"Tecla pulsada: {key}"
 
     if action in ("reload_n", "refresh_n", "reload_page_n"):
         try:
             reload_page_n(int(value or 1))
-            return f"Reloaded {value or 1} time(s)."
+            n = int(value or 1)
+            return f"Recargada {'1 vez' if n == 1 else f'{n} veces'}."
         except Exception as e:
-            return f"Reload failed: {e}"
+            return f"Error al recargar: {e}"
 
     if action == "scroll_up":
         scroll_up(int(value or 500))
-        return "Scrolled up."
+        return "Desplazado hacia arriba."
 
     if action == "scroll_down":
         scroll_down(int(value or 500))
-        return "Scrolled down."
+        return "Desplazado hacia abajo."
 
     func = ACTION_MAP.get(action)
     if not func:
@@ -889,20 +890,20 @@ def computer_settings(
         func()
     except Exception as e:
         print(f"[Settings] Action failed ({action}): {e}")
-        return f"Action failed ({action}): {e}"
+        return f"Error en la acción ({action}): {e}"
 
     if _before:
         kind, old = _before
         if old is not None:
             if kind == "volume":
                 push_undo(f"volume ({action})",
-                          lambda b=old: (volume_set(b), f"Volume back to {b}%.")[1])
+                          lambda b=old: (volume_set(b), f"Volumen restaurado a {b}%.")[1])
             elif kind == "brightness":
                 push_undo(f"brightness ({action})",
-                          lambda b=old: (brightness_set(b), f"Brightness back to {b}%.")[1])
+                          lambda b=old: (brightness_set(b), f"Brillo restaurado a {b}%.")[1])
     elif action == "dark_mode":
         # A pure toggle: calling it again is the undo.
         push_undo("dark mode toggled",
-                  lambda: (dark_mode(), "Theme switched back.")[1])
+                  lambda: (dark_mode(), "Tema restaurado.")[1])
 
-    return f"Done: {action}."
+    return f"Listo: {action}."

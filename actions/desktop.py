@@ -82,7 +82,7 @@ def _build_sandbox() -> dict:
 
 def _execute_generated_code(code: str, player=None) -> str:
     if not code or code.strip() == "UNSAFE":
-        return "This action cannot be performed safely."
+        return "Esta acción no puede realizarse de forma segura."
 
     # Kod temizleme
     if code.startswith("```"):
@@ -95,10 +95,10 @@ def _execute_generated_code(code: str, player=None) -> str:
 
     try:
         exec(compile(code, "<jarvis_desktop>", "exec"), sandbox)
-        return "\n".join(output_lines) if output_lines else "Done."
+        return "\n".join(output_lines) if output_lines else "Hecho."
     except Exception as e:
         print(f"[Desktop] Exec error: {e}\nCode:\n{code[:300]}")
-        return f"Execution error: {e}"
+        return f"Error de ejecución: {e}"
 
 
 def _ask_gemini_for_desktop_action(task: str) -> str:
@@ -152,9 +152,9 @@ Task: {task}"""
 def set_wallpaper(image_path: str) -> str:
     path = Path(image_path).expanduser().resolve()
     if not path.exists():
-        return f"Image not found: {image_path}"
+        return f"Imagen no encontrada: {image_path}"
     if path.suffix.lower() not in {".jpg", ".jpeg", ".png", ".bmp", ".webp"}:
-        return f"Unsupported format: {path.suffix}. Use jpg, png, bmp or webp."
+        return f"Formato no compatible: {path.suffix}. Usa jpg, png, bmp o webp."
 
     try:
         if _OS == "Windows":
@@ -168,7 +168,7 @@ def set_wallpaper(image_path: str) -> str:
                 except ImportError:
                     pass 
             ctypes.windll.user32.SystemParametersInfoW(20, 0, str(path), 3)
-            return f"Wallpaper set: {path.name}"
+            return f"Fondo de pantalla establecido: {path.name}"
 
         elif _OS == "Darwin":
             script = (
@@ -176,7 +176,7 @@ def set_wallpaper(image_path: str) -> str:
                 f'set picture to POSIX file "{path}"'
             )
             subprocess.run(["osascript", "-e", script], capture_output=True)
-            return f"Wallpaper set: {path.name}"
+            return f"Fondo de pantalla establecido: {path.name}"
 
         else:
             desktop_env = os.environ.get("XDG_CURRENT_DESKTOP", "").lower()
@@ -223,14 +223,14 @@ for (var i = 0; i < allDesktops.length; i++) {{
                 )
                 if result.returncode != 0:
                     return (
-                        f"Could not set wallpaper automatically on {desktop_env}. "
-                        f"Try manually or install 'feh'."
+                        f"No pude establecer el fondo automáticamente en {desktop_env}. "
+                        f"Inténtalo manualmente o instala 'feh'."
                     )
 
-            return f"Wallpaper set: {path.name}"
+            return f"Fondo de pantalla establecido: {path.name}"
 
     except Exception as e:
-        return f"Could not set wallpaper: {e}"
+        return f"No pude establecer el fondo de pantalla: {e}"
 
 
 def set_wallpaper_from_url(url: str) -> str:
@@ -246,7 +246,7 @@ def set_wallpaper_from_url(url: str) -> str:
             pass
         return result
     except Exception as e:
-        return f"Could not download wallpaper: {e}"
+        return f"No pude descargar el fondo de pantalla: {e}"
 
 
 def get_current_wallpaper() -> str:
@@ -258,7 +258,7 @@ def get_current_wallpaper() -> str:
             )
             val, _ = winreg.QueryValueEx(key, "Wallpaper")
             winreg.CloseKey(key)
-            return f"Current wallpaper: {val}"
+            return f"Fondo de pantalla actual: {val}"
 
         elif _OS == "Darwin":
             script = (
@@ -268,7 +268,7 @@ def get_current_wallpaper() -> str:
                 ["osascript", "-e", script],
                 capture_output=True, text=True
             )
-            return f"Current wallpaper: {result.stdout.strip()}"
+            return f"Fondo de pantalla actual: {result.stdout.strip()}"
 
         else:
             desktop_env = os.environ.get("XDG_CURRENT_DESKTOP", "").lower()
@@ -277,11 +277,11 @@ def get_current_wallpaper() -> str:
                     ["gsettings", "get", "org.gnome.desktop.background", "picture-uri"],
                     capture_output=True, text=True
                 )
-                return f"Current wallpaper: {result.stdout.strip()}"
-            return "Wallpaper path retrieval not supported for this desktop environment."
+                return f"Fondo de pantalla actual: {result.stdout.strip()}"
+            return "No se puede obtener la ruta del fondo en este entorno de escritorio."
 
     except Exception as e:
-        return f"Could not get wallpaper: {e}"
+        return f"No pude obtener el fondo de pantalla: {e}"
 
 FILE_TYPE_MAP = {
     "Images":      {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".svg", ".ico", ".heic"},
@@ -335,13 +335,13 @@ def organize_desktop(mode: str = "by_type") -> str:
         shutil.move(str(item), str(new_path))
         moved.append(f"{item.name} → {folder_name}/")
 
-    result = f"Desktop organized ({mode}): {len(moved)} files moved."
+    result = f"Escritorio organizado ({mode}): {len(moved)} archivos movidos."
     if moved:
         result += "\n" + "\n".join(moved[:8])
         if len(moved) > 8:
-            result += f"\n... and {len(moved) - 8} more."
+            result += f"\n... y {len(moved) - 8} más."
     if skipped:
-        result += f"\n{len(skipped)} file(s) skipped (name conflict)."
+        result += f"\n{len(skipped)} archivo(s) omitido(s) (conflicto de nombre)."
     return result
 
 
@@ -356,7 +356,7 @@ def list_desktop() -> str:
                 count = len(list(item.iterdir()))
             except PermissionError:
                 count = "?"
-            items.append(f"📁 {item.name}/ ({count} items)")
+            items.append(f"📁 {item.name}/ ({count} elementos)")
         else:
             size     = item.stat().st_size
             size_str = (
@@ -366,8 +366,8 @@ def list_desktop() -> str:
             items.append(f"📄 {item.name} ({size_str})")
 
     if not items:
-        return "Desktop is empty."
-    return f"Desktop ({len(items)} items):\n" + "\n".join(items)
+        return "El escritorio está vacío."
+    return f"Escritorio ({len(items)} elementos):\n" + "\n".join(items)
 
 
 def clean_desktop() -> str:
@@ -388,7 +388,7 @@ def clean_desktop() -> str:
             shutil.move(str(item), str(new_path))
             moved += 1
 
-    return f"Desktop cleaned: {moved} files archived to '{archive_dir.name}'."
+    return f"Escritorio limpiado: {moved} archivos archivados en '{archive_dir.name}'."
 
 
 def get_desktop_stats() -> str:
@@ -401,11 +401,11 @@ def get_desktop_stats() -> str:
         else f"{total_size / 1024 / 1024:.1f} MB"
     )
     return (
-        f"Desktop stats ({_OS}):\n"
-        f"  Files   : {len(files)}\n"
-        f"  Folders : {len(folders)}\n"
-        f"  Size    : {size_str}\n"
-        f"  Path    : {desktop}"
+        f"Estadísticas del escritorio ({_OS}):\n"
+        f"  Archivos : {len(files)}\n"
+        f"  Carpetas : {len(folders)}\n"
+        f"  Tamaño   : {size_str}\n"
+        f"  Ruta     : {desktop}"
     )
 
 def desktop_control(
@@ -434,11 +434,11 @@ def desktop_control(
     try:
         if action == "wallpaper":
             path = params.get("path", "")
-            return set_wallpaper(path) if path else "No image path provided."
+            return set_wallpaper(path) if path else "No se indicó la ruta de la imagen."
 
         elif action == "wallpaper_url":
             url = params.get("url", "")
-            return set_wallpaper_from_url(url) if url else "No URL provided."
+            return set_wallpaper_from_url(url) if url else "No se indicó la URL."
 
         elif action == "current_wallpaper":
             return get_current_wallpaper()
@@ -458,7 +458,7 @@ def desktop_control(
         elif action == "task" or task:
             actual_task = task or params.get("description", "")
             if not actual_task:
-                return "Please describe what you want to do on the desktop."
+                return "Describe qué quieres hacer en el escritorio."
 
             print(f"[Desktop] Asking Gemini: {actual_task}")
             if player:
@@ -471,8 +471,8 @@ def desktop_control(
             if action:
                 code = _ask_gemini_for_desktop_action(action)
                 return _execute_generated_code(code, player=player)
-            return "No action or task specified."
+            return "No se especificó acción ni tarea."
 
     except Exception as e:
         print(f"[Desktop] Error: {e}")
-        return f"Desktop control error: {e}"
+        return f"Error en el control del escritorio: {e}"

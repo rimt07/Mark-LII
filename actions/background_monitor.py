@@ -59,13 +59,13 @@ def _save(monitors: dict) -> None:
 def add_monitor(topic: str) -> str:
     topic = topic.strip()
     if not topic:
-        return "Please specify a topic to monitor."
+        return "Indica un tema para vigilar."
     if _is_blocked(topic):
-        return "I don't monitor crypto or financial topics."
+        return "No vigilo temas de criptomonedas ni finanzas."
     monitors = _load()
     slug = _slug(topic)
     if slug in monitors:
-        return f"Already monitoring: {monitors[slug]['topic']}"
+        return f"Ya se vigila: {monitors[slug]['topic']}"
     monitors[slug] = {
         "topic":      topic,
         "added":      datetime.now().strftime("%Y-%m-%d"),
@@ -74,7 +74,7 @@ def add_monitor(topic: str) -> str:
     }
     _save(monitors)
     print(f"[Monitor] ➕ Added: {topic}")
-    return f"Now monitoring: {topic}"
+    return f"Ahora vigilo: {topic}"
 
 
 def remove_monitor(topic: str) -> str:
@@ -85,14 +85,14 @@ def remove_monitor(topic: str) -> str:
     if slug in monitors:
         label = monitors.pop(slug)["topic"]
         _save(monitors)
-        return f"Stopped monitoring: {label}"
+        return f"Dejé de vigilar: {label}"
     # partial match fallback
     for key, val in list(monitors.items()):
         if topic in val.get("topic", "").lower():
             label = monitors.pop(key)["topic"]
             _save(monitors)
-            return f"Stopped monitoring: {label}"
-    return f"Not found in monitored topics: {topic}"
+            return f"Dejé de vigilar: {label}"
+    return f"No está en los temas vigilados: {topic}"
 
 
 def list_monitors() -> list[str]:
@@ -142,11 +142,11 @@ def check_all() -> list[str]:
 
             snippet = top.get("snippet", "")[:150]
             source  = top.get("source", "")
-            parts   = [f"[MONITOR_ALERT] {topic}", f"Headline: {title}"]
+            parts   = [f"[MONITOR_ALERT] {topic}", f"Titular: {title}"]
             if snippet:
                 parts.append(snippet)
             if source:
-                parts.append(f"Source: {source}")
+                parts.append(f"Fuente: {source}")
             alerts.append("\n".join(parts))
             print(f"[Monitor] 🔔 New headline for '{topic}': {title[:60]}")
 

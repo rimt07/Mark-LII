@@ -136,7 +136,7 @@ def _search_in_app(query: str) -> None:
 
 def _desktop_send(app_name: str, receiver: str, message: str) -> str:
     if not _open_app(app_name):
-        return f"Could not open {app_name}."
+        return f"No pude abrir {app_name}."
 
     time.sleep(1.0)
     _search_in_app(receiver)
@@ -147,7 +147,7 @@ def _desktop_send(app_name: str, receiver: str, message: str) -> str:
     time.sleep(0.2)
     pyautogui.press("enter")
     time.sleep(0.3)
-    return f"Message sent to {receiver} via {app_name}."
+    return f"Mensaje enviado a {receiver} por {app_name}."
 
 def _send_whatsapp(receiver: str, message: str) -> str:
     return _desktop_send("WhatsApp", receiver, message)
@@ -167,7 +167,7 @@ def _send_instagram(receiver: str, message: str) -> str:
     _require_pyautogui()
 
     if not _open_browser_url("https://www.instagram.com/direct/new/"):
-        return "Could not open Instagram in browser."
+        return "No pude abrir Instagram en el navegador."
 
     _paste_text(receiver)
     time.sleep(1.5)
@@ -188,14 +188,14 @@ def _send_instagram(receiver: str, message: str) -> str:
     pyautogui.press("enter")
     time.sleep(0.3)
 
-    return f"Message sent to {receiver} via Instagram."
+    return f"Mensaje enviado a {receiver} por Instagram."
 
 
 def _send_messenger(receiver: str, message: str) -> str:
     _require_pyautogui()
 
     if not _open_browser_url("https://www.messenger.com/"):
-        return "Could not open Messenger in browser."
+        return "No pude abrir Messenger en el navegador."
 
 
     _search_in_app(receiver)
@@ -210,7 +210,7 @@ def _send_messenger(receiver: str, message: str) -> str:
     pyautogui.press("enter")
     time.sleep(0.3)
 
-    return f"Message sent to {receiver} via Messenger."
+    return f"Mensaje enviado a {receiver} por Messenger."
 
 _PLATFORM_MAP = [
     ({"whatsapp", "wp", "wapp"},              _send_whatsapp),
@@ -242,11 +242,11 @@ def send_message(
     platform     = params.get("platform", "whatsapp").strip()
 
     if not receiver:
-        return "Please specify a recipient."
+        return "Indica un destinatario."
     if not message_text:
-        return "Please specify the message content."
+        return "Indica el contenido del mensaje."
     if not _PYAUTOGUI:
-        return "PyAutoGUI is not installed — cannot control the desktop."
+        return "PyAutoGUI no está instalado; no puedo controlar el escritorio."
 
     preview = message_text[:50] + ("…" if len(message_text) > 50 else "")
     print(f"[SendMessage] 📨 {platform} → {receiver}: {preview}")
@@ -257,9 +257,9 @@ def send_message(
         handler = _resolve_platform(platform)
         result  = handler(receiver, message_text)
     except Exception as e:
-        result = f"Could not send message: {e}"
+        result = f"No pude enviar el mensaje: {e}"
 
-    print(f"[SendMessage] {'✅' if 'sent' in result.lower() else '❌'} {result}")
+    print(f"[SendMessage] {'✅' if 'enviado' in result.lower() else '❌'} {result}")
     if player:
         player.write_log(f"[msg] {result}")
 

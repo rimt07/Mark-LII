@@ -24,10 +24,10 @@ def _undo_move(src: Path, dst: Path):
     """Reverse of a move: put it back where it came from."""
     def _fn():
         if not dst.exists():
-            return f"'{dst.name}' is no longer there — nothing moved back."
+            return f"'{dst.name}' ya no está ahí — no se movió nada de vuelta."
         src.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(dst), str(src))
-        return f"'{src.name}' is back in {src.parent.name}/."
+        return f"'{src.name}' volvió a {src.parent.name}/."
     return _fn
 
 
@@ -38,15 +38,15 @@ def _undo_create(target: Path):
     undo for 'create a folder' is not 'delete whatever ended up in it'."""
     def _fn():
         if not target.exists():
-            return f"'{target.name}' is already gone."
+            return f"'{target.name}' ya no existe."
         if target.is_dir():
             if any(target.iterdir()):
-                return (f"'{target.name}' is not empty any more — "
-                        f"leaving it alone rather than deleting your files.")
+                return (f"'{target.name}' ya no está vacío — "
+                        f"lo dejo como está para no borrar sus archivos.")
             target.rmdir()
         else:
             target.unlink()
-        return f"Removed '{target.name}'."
+        return f"Se eliminó '{target.name}'."
     return _fn
 
 
@@ -57,11 +57,11 @@ def _undo_write(target: Path, previous: str | None):
         if previous is None:
             if target.exists():
                 target.unlink()
-                return f"Removed '{target.name}' — it did not exist before."
-            return f"'{target.name}' is already gone."
+                return f"Se eliminó '{target.name}' — no existía antes."
+            return f"'{target.name}' ya no existe."
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(previous, encoding="utf-8")
-        return f"Restored the previous contents of '{target.name}'."
+        return f"Se restauró el contenido anterior de '{target.name}'."
     return _fn
 
 
@@ -83,11 +83,11 @@ def _restore_from_trash(original: Path) -> str:
                         str(original.parent).strip().lower():
                     if str(item.Name).strip().lower() == original.name.strip().lower():
                         item.InvokeVerb("UNDELETE")
-                        return f"'{original.name}' restored from the Recycle Bin."
+                        return f"'{original.name}' restaurado desde la Papelera de reciclaje."
         except Exception as e:
             print(f"[file] Recycle Bin restore failed: {e}")
-    return (f"'{original.name}' is in the Recycle Bin — I could not pull it back "
-            f"automatically, but it is there and can be restored by hand.")
+    return (f"'{original.name}' está en la Papelera de reciclaje — no pude recuperarlo "
+            f"automáticamente, pero está ahí y puede restaurarlo manualmente.")
 
 
 _SAFE_ROOTS: list[Path] = [
@@ -187,23 +187,23 @@ def _safe_trash(target: Path) -> str:
 
     if not _SEND2TRASH:
         return (
-            "send2trash is not installed. "
-            "Run: pip install send2trash — "
-            "Permanent deletion is disabled for safety."
+            "send2trash no está instalado. "
+            "Ejecute: pip install send2trash — "
+            "La eliminación permanente está deshabilitada por seguridad."
         )
     send2trash.send2trash(str(target))
-    return f"Moved to Trash: {target.name}"
+    return f"Movido a la Papelera: {target.name}"
 
 
 def list_files(path: str = "desktop", show_hidden: bool = False) -> str:
     try:
         target = _resolve_path(path)
         if not _is_safe_path(target):
-            return f"Access denied: {target}"
+            return f"Acceso denegado: {target}"
         if not target.exists():
-            return f"Path not found: {target}"
+            return f"Ruta no encontrada: {target}"
         if not target.is_dir():
-            return f"Not a directory: {target}"
+            return f"No es un directorio: {target}"
 
         items = []
         for item in sorted(target.iterdir()):
@@ -216,14 +216,14 @@ def list_files(path: str = "desktop", show_hidden: bool = False) -> str:
                 items.append(f"📄 {item.name} ({size})")
 
         if not items:
-            return f"Directory is empty: {target.name}/"
+            return f"El directorio está vacío: {target.name}/"
 
-        return f"Contents of {target.name}/ ({len(items)} items):\n" + "\n".join(items)
+        return f"Contenido de {target.name}/ ({len(items)} elementos):\n" + "\n".join(items)
 
     except PermissionError:
-        return f"Permission denied: {path}"
+        return f"Permiso denegado: {path}"
     except Exception as e:
-        return f"Error listing files: {e}"
+        return f"Error al listar archivos: {e}"
 
 
 def create_file(path: str, name: str = "", content: str = "") -> str:
@@ -231,7 +231,7 @@ def create_file(path: str, name: str = "", content: str = "") -> str:
         base   = _resolve_path(path)
         target = (base / name) if name else base
         if not _is_safe_path(target):
-            return f"Access denied: {target}"
+            return f"Acceso denegado: {target}"
         target.parent.mkdir(parents=True, exist_ok=True)
         existed = target.exists()
         previous = None
@@ -243,9 +243,9 @@ def create_file(path: str, name: str = "", content: str = "") -> str:
         target.write_text(content, encoding="utf-8")
         push_undo(f"created {target.name}",
                   _undo_write(target, previous) if existed else _undo_create(target))
-        return f"File created: {target.name}"
+        return f"Archivo creado: {target.name}"
     except Exception as e:
-        return f"Could not create file: {e}"
+        return f"No se pudo crear el archivo: {e}"
 
 
 def create_folder(path: str, name: str = "") -> str:
@@ -253,7 +253,7 @@ def create_folder(path: str, name: str = "") -> str:
         base   = _resolve_path(path)
         target = (base / name) if name else base
         if not _is_safe_path(target):
-            return f"Access denied: {target}"
+            return f"Acceso denegado: {target}"
         already = target.exists()
         target.mkdir(parents=True, exist_ok=True)
         # Only offer to undo a folder we actually made. "mkdir -p" on something
@@ -261,9 +261,9 @@ def create_folder(path: str, name: str = "") -> str:
         # directory the user has had for years.
         if not already:
             push_undo(f"created folder {target.name}", _undo_create(target))
-        return f"Folder created: {target.name}"
+        return f"Carpeta creada: {target.name}"
     except Exception as e:
-        return f"Could not create folder: {e}"
+        return f"No se pudo crear la carpeta: {e}"
 
 
 def delete_file(path: str, name: str = "") -> str:
@@ -271,9 +271,9 @@ def delete_file(path: str, name: str = "") -> str:
         base   = _resolve_path(path)
         target = (base / name) if name else base
         if not _is_safe_path(target):
-            return f"Access denied: {target}"
+            return f"Acceso denegado: {target}"
         if not target.exists():
-            return f"Not found: {target.name}"
+            return f"No encontrado: {target.name}"
 
         # Güvenli dizin kontrolü — kritik kullanıcı klasörlerini koru
         protected = {
@@ -281,19 +281,19 @@ def delete_file(path: str, name: str = "") -> str:
             _get_pictures(), _get_music(), _get_videos(), Path.home()
         }
         if target.resolve() in {p.resolve() for p in protected}:
-            return f"Protected directory, cannot delete: {target.name}"
+            return f"Directorio protegido, no se puede eliminar: {target.name}"
 
         original = target.resolve()
         result   = _safe_trash(target)
-        if result.startswith("Moved to Trash"):
+        if result.startswith("Movido a la Papelera"):
             push_undo(f"deleted {original.name}",
                       lambda p=original: _restore_from_trash(p))
         return result
 
     except PermissionError:
-        return f"Permission denied: {path}"
+        return f"Permiso denegado: {path}"
     except Exception as e:
-        return f"Could not delete: {e}"
+        return f"No se pudo eliminar: {e}"
 
 
 def move_file(path: str, name: str = "", destination: str = "") -> str:
@@ -303,13 +303,13 @@ def move_file(path: str, name: str = "", destination: str = "") -> str:
         dst    = _resolve_path(destination) if destination else None
 
         if not src.exists():
-            return f"Source not found: {src.name}"
+            return f"Origen no encontrado: {src.name}"
         if dst is None:
-            return "No destination specified."
+            return "No se especificó destino."
         if not _is_safe_path(src):
-            return f"Access denied (source): {src}"
+            return f"Acceso denegado (origen): {src}"
         if not _is_safe_path(dst):
-            return f"Access denied (destination): {dst}"
+            return f"Acceso denegado (destino): {dst}"
 
         if dst.is_dir():
             dst = dst / src.name
@@ -319,10 +319,10 @@ def move_file(path: str, name: str = "", destination: str = "") -> str:
         shutil.move(str(src), str(dst))
         push_undo(f"moved {origin.name} to {dst.parent.name}/",
                   _undo_move(origin, dst.resolve()))
-        return f"Moved: {src.name} → {dst.parent.name}/"
+        return f"Movido: {src.name} → {dst.parent.name}/"
 
     except Exception as e:
-        return f"Could not move: {e}"
+        return f"No se pudo mover: {e}"
 
 
 def copy_file(path: str, name: str = "", destination: str = "") -> str:
@@ -332,13 +332,13 @@ def copy_file(path: str, name: str = "", destination: str = "") -> str:
         dst  = _resolve_path(destination) if destination else None
 
         if not src.exists():
-            return f"Source not found: {src.name}"
+            return f"Origen no encontrado: {src.name}"
         if dst is None:
-            return "No destination specified."
+            return "No se especificó destino."
         if not _is_safe_path(src):
-            return f"Access denied (source): {src}"
+            return f"Acceso denegado (origen): {src}"
         if not _is_safe_path(dst):
-            return f"Access denied (destination): {dst}"
+            return f"Acceso denegado (destino): {dst}"
 
         if dst.is_dir():
             dst = dst / src.name
@@ -354,18 +354,18 @@ def copy_file(path: str, name: str = "", destination: str = "") -> str:
         _copy = dst.resolve()
         def _undo_copy():
             if not _copy.exists():
-                return f"The copy '{_copy.name}' is already gone."
+                return f"La copia '{_copy.name}' ya no existe."
             if _copy.is_dir():
                 shutil.rmtree(_copy)
             else:
                 _copy.unlink()
-            return f"Removed the copy in {_copy.parent.name}/."
+            return f"Se eliminó la copia en {_copy.parent.name}/."
         push_undo(f"copied {src.name} to {dst.parent.name}/", _undo_copy)
 
-        return f"Copied: {src.name} → {dst.parent.name}/"
+        return f"Copiado: {src.name} → {dst.parent.name}/"
 
     except Exception as e:
-        return f"Could not copy: {e}"
+        return f"No se pudo copiar: {e}"
 
 
 def rename_file(path: str, name: str = "", new_name: str = "") -> str:
@@ -373,24 +373,24 @@ def rename_file(path: str, name: str = "", new_name: str = "") -> str:
         base     = _resolve_path(path)
         target   = (base / name) if name else base
         if not _is_safe_path(target):
-            return f"Access denied: {target}"
+            return f"Acceso denegado: {target}"
         if not target.exists():
-            return f"Not found: {target.name}"
+            return f"No encontrado: {target.name}"
         if not new_name:
-            return "No new name provided."
+            return "No se proporcionó un nombre nuevo."
 
         new_path = target.parent / new_name
         if new_path.exists():
-            return f"A file named '{new_name}' already exists here."
+            return f"Ya existe un archivo llamado '{new_name}' aquí."
 
         old_path = target.resolve()
         target.rename(new_path)
         push_undo(f"renamed {old_path.name} to {new_name}",
                   _undo_move(old_path, new_path.resolve()))
-        return f"Renamed: {target.name} → {new_name}"
+        return f"Renombrado: {target.name} → {new_name}"
 
     except Exception as e:
-        return f"Could not rename: {e}"
+        return f"No se pudo renombrar: {e}"
 
 
 def read_file(path: str, name: str = "", max_chars: int = 4000) -> str:
@@ -398,19 +398,19 @@ def read_file(path: str, name: str = "", max_chars: int = 4000) -> str:
         base   = _resolve_path(path)
         target = (base / name) if name else base
         if not _is_safe_path(target):
-            return f"Access denied: {target}"
+            return f"Acceso denegado: {target}"
         if not target.exists():
-            return f"File not found: {target.name}"
+            return f"Archivo no encontrado: {target.name}"
         if not target.is_file():
-            return f"Not a file: {target.name}"
+            return f"No es un archivo: {target.name}"
 
         content = target.read_text(encoding="utf-8", errors="ignore")
         if len(content) > max_chars:
-            content = content[:max_chars] + f"\n\n[Truncated — {len(content)} total chars]"
+            content = content[:max_chars] + f"\n\n[Truncado — {len(content)} caracteres en total]"
         return content
 
     except Exception as e:
-        return f"Could not read file: {e}"
+        return f"No se pudo leer el archivo: {e}"
 
 
 def write_file(path: str, name: str = "", content: str = "",
@@ -419,7 +419,7 @@ def write_file(path: str, name: str = "", content: str = "",
         base   = _resolve_path(path)
         target = (base / name) if name else base
         if not _is_safe_path(target):
-            return f"Access denied: {target}"
+            return f"Acceso denegado: {target}"
         target.parent.mkdir(parents=True, exist_ok=True)
 
         # Snapshot before writing. None means "did not exist", which is a
@@ -439,15 +439,15 @@ def write_file(path: str, name: str = "", content: str = "",
         with open(target, mode, encoding="utf-8") as f:
             f.write(content)
 
-        action = "Appended to" if append else "Written to"
+        action = "Añadido a" if append else "Escrito en"
         if undoable:
             push_undo(f"wrote to {target.name}", _undo_write(target, previous))
             return f"{action}: {target.name}"
         return (f"{action}: {target.name}. "
-                f"(Too large to keep a copy of the old contents, so this one "
-                f"cannot be undone.)")
+                f"(Demasiado grande para guardar una copia del contenido anterior, "
+                f"así que esta acción no se puede deshacer.)")
     except Exception as e:
-        return f"Could not write file: {e}"
+        return f"No se pudo escribir el archivo: {e}"
 
 
 def find_files(name: str = "", extension: str = "",
@@ -455,9 +455,9 @@ def find_files(name: str = "", extension: str = "",
     try:
         search_path = _resolve_path(path)
         if not _is_safe_path(search_path):
-            return f"Access denied: {search_path}"
+            return f"Acceso denegado: {search_path}"
         if not search_path.exists():
-            return f"Search path not found: {path}"
+            return f"Ruta de búsqueda no encontrada: {path}"
 
         results    = []
         dir_count  = 0
@@ -481,13 +481,13 @@ def find_files(name: str = "", extension: str = "",
                 break
 
         if not results:
-            query = name or extension or "files"
-            return f"No {query} found in {search_path.name}/"
+            query = name or extension or "archivos"
+            return f"No se encontró {query} en {search_path.name}/"
 
-        return f"Found {len(results)} file(s):\n" + "\n".join(results)
+        return f"Se encontraron {len(results)} archivo(s):\n" + "\n".join(results)
 
     except Exception as e:
-        return f"Search error: {e}"
+        return f"Error de búsqueda: {e}"
 
 
 def get_largest_files(path: str = "downloads", count: int = 10) -> str:
@@ -495,9 +495,9 @@ def get_largest_files(path: str = "downloads", count: int = 10) -> str:
     try:
         search_path = _resolve_path(path)
         if not _is_safe_path(search_path):
-            return f"Access denied: {search_path}"
+            return f"Acceso denegado: {search_path}"
         if not search_path.exists():
-            return f"Path not found: {path}"
+            return f"Ruta no encontrada: {path}"
 
         files = []
         for item in search_path.rglob("*"):
@@ -511,9 +511,9 @@ def get_largest_files(path: str = "downloads", count: int = 10) -> str:
         top = files[:count]
 
         if not top:
-            return "No files found."
+            return "No se encontraron archivos."
 
-        lines = [f"Top {len(top)} largest files in {search_path.name}/:"]
+        lines = [f"Los {len(top)} archivos más grandes en {search_path.name}/:"]
         for size, f in top:
             lines.append(f"  {_format_size(size):>10}  {f.name}  ({f.parent})")
 
@@ -529,13 +529,13 @@ def get_disk_usage(path: str = "home") -> str:
         usage  = shutil.disk_usage(target)
         pct    = usage.used / usage.total * 100
         return (
-            f"Disk usage ({target}):\n"
-            f"  Total : {_format_size(usage.total)}\n"
-            f"  Used  : {_format_size(usage.used)} ({pct:.1f}%)\n"
-            f"  Free  : {_format_size(usage.free)}"
+            f"Uso del disco ({target}):\n"
+            f"  Total  : {_format_size(usage.total)}\n"
+            f"  Usado  : {_format_size(usage.used)} ({pct:.1f}%)\n"
+            f"  Libre  : {_format_size(usage.free)}"
         )
     except Exception as e:
-        return f"Could not get disk usage: {e}"
+        return f"No se pudo obtener el uso del disco: {e}"
 
 
 def organize_desktop() -> str:
@@ -604,21 +604,21 @@ def organize_desktop() -> str:
                             folder.rmdir()
                     except Exception:
                         pass
-                return f"{restored} file(s) put back on the desktop."
+                return f"{restored} archivo(s) devuelto(s) al escritorio."
             push_undo(f"organized the desktop ({len(journal)} files)", _undo_organize)
 
-        result = f"Desktop organized: {len(moved)} files moved."
+        result = f"Escritorio organizado: {len(moved)} archivos movidos."
         if moved:
             preview = moved[:8]
             result += "\n" + "\n".join(preview)
             if len(moved) > 8:
-                result += f"\n... and {len(moved) - 8} more."
+                result += f"\n... y {len(moved) - 8} más."
         if skipped:
-            result += f"\n{len(skipped)} file(s) skipped (name conflict)."
+            result += f"\n{len(skipped)} archivo(s) omitido(s) (conflicto de nombre)."
         return result
 
     except Exception as e:
-        return f"Could not organize desktop: {e}"
+        return f"No se pudo organizar el escritorio: {e}"
 
 
 def get_file_info(path: str, name: str = "") -> str:
@@ -626,24 +626,24 @@ def get_file_info(path: str, name: str = "") -> str:
         base   = _resolve_path(path)
         target = (base / name) if name else base
         if not _is_safe_path(target):
-            return f"Access denied: {target}"
+            return f"Acceso denegado: {target}"
         if not target.exists():
-            return f"Not found: {target.name}"
+            return f"No encontrado: {target.name}"
 
         stat = target.stat()
         info = {
-            "Name":      target.name,
-            "Type":      "Folder" if target.is_dir() else "File",
-            "Size":      _format_size(stat.st_size),
-            "Location":  str(target.parent),
-            "Created":   datetime.fromtimestamp(stat.st_ctime).strftime("%Y-%m-%d %H:%M"),
-            "Modified":  datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
-            "Extension": target.suffix or "—",
+            "Nombre":    target.name,
+            "Tipo":      "Carpeta" if target.is_dir() else "Archivo",
+            "Tamaño":    _format_size(stat.st_size),
+            "Ubicación": str(target.parent),
+            "Creado":    datetime.fromtimestamp(stat.st_ctime).strftime("%Y-%m-%d %H:%M"),
+            "Modificado": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
+            "Extensión": target.suffix or "—",
         }
         return "\n".join(f"  {k}: {v}" for k, v in info.items())
 
     except Exception as e:
-        return f"Could not get file info: {e}"
+        return f"No se pudo obtener la información del archivo: {e}"
 
 def file_controller(
     parameters: dict = None,
@@ -715,7 +715,7 @@ def file_controller(
             return get_file_info(path, name=name)
 
         else:
-            return f"Unknown action: '{action}'"
+            return f"Acción desconocida: '{action}'"
 
     except Exception as e:
-        return f"File controller error ({action}): {e}"
+        return f"Error del controlador de archivos ({action}): {e}"

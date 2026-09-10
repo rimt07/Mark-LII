@@ -191,7 +191,7 @@ def _format_spoken(
     lines = [f"Here are the top flights from {origin} to {destination} on {date}, sir."]
 
     for i, f in enumerate(flights[:5], 1):
-        airline   = f.get("airline",   "Unknown airline")
+        airline   = f.get("airline",   "Aerolínea desconocida")
         departure = f.get("departure", "--:--")
         arrival   = f.get("arrival",   "--:--")
         duration  = f.get("duration",  "")
@@ -199,13 +199,13 @@ def _format_spoken(
         price     = f.get("price",     "")
         currency  = f.get("currency",  "")
 
-        stop_str  = "non-stop" if stops == 0 else f"{stops} stop{'s' if stops > 1 else ''}"
-        price_str = f"{price} {currency}".strip() if price else "price unavailable"
+        stop_str  = "directo" if stops == 0 else f"{stops} escala{'s' if stops > 1 else ''}"
+        price_str = f"{price} {currency}".strip() if price else "precio no disponible"
         dur_str   = f", {duration}" if duration else ""
 
         lines.append(
-            f"Option {i}: {airline}, departing {departure}, "
-            f"arriving {arrival}{dur_str}, {stop_str}, {price_str}."
+            f"Opción {i}: {airline}, sale {departure}, "
+            f"llega {arrival}{dur_str}, {stop_str}, {price_str}."
         )
 
     # Cheapest — strip non-digits for comparison
@@ -216,8 +216,8 @@ def _format_spoken(
             key=lambda x: int(re.sub(r"[^\d]", "", str(x["price"])) or "999999"),
         )
         lines.append(
-            f"The cheapest option is {cheapest.get('airline')} "
-            f"at {cheapest.get('price')} {cheapest.get('currency', '')}."
+            f"La opción más barata es {cheapest.get('airline')} "
+            f"a {cheapest.get('price')} {cheapest.get('currency', '')}."
         )
 
     return " ".join(lines)
@@ -232,34 +232,34 @@ def _format_text_report(
     page_url:    str,
 ) -> str:
     lines = [
-        "JARVIS — Flight Search Results",
+        "JARVIS — Resultados de búsqueda de vuelos",
         "─" * 50,
-        f"Route     : {origin} → {destination}",
-        f"Date      : {date}",
+        f"Ruta      : {origin} → {destination}",
+        f"Fecha     : {date}",
     ]
     if return_date:
-        lines.append(f"Return    : {return_date}")
+        lines.append(f"Regreso   : {return_date}")
     lines += [
-        f"Searched  : {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-        f"Source    : {page_url}",
+        f"Buscado   : {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        f"Fuente    : {page_url}",
         "─" * 50,
         "",
     ]
 
     if not flights:
-        lines.append("No flights found.")
+        lines.append("No se encontraron vuelos.")
     else:
         for i, f in enumerate(flights, 1):
             stops    = f.get("stops", 0)
-            stop_str = "Non-stop" if stops == 0 else f"{stops} stop(s)"
+            stop_str = "Directo" if stops == 0 else f"{stops} escala(s)"
             lines += [
-                f"Flight {i}:",
-                f"  Airline   : {f.get('airline',   'N/A')}",
-                f"  Departure : {f.get('departure', 'N/A')}",
-                f"  Arrival   : {f.get('arrival',   'N/A')}",
-                f"  Duration  : {f.get('duration',  'N/A')}",
-                f"  Stops     : {stop_str}",
-                f"  Price     : {f.get('price', 'N/A')} {f.get('currency', '')}",
+                f"Vuelo {i}:",
+                f"  Aerolínea : {f.get('airline',   'N/D')}",
+                f"  Salida    : {f.get('departure', 'N/D')}",
+                f"  Llegada   : {f.get('arrival',   'N/D')}",
+                f"  Duración  : {f.get('duration',  'N/D')}",
+                f"  Escalas   : {stop_str}",
+                f"  Precio    : {f.get('price', 'N/D')} {f.get('currency', '')}",
                 "",
             ]
 
@@ -300,9 +300,9 @@ def flight_finder(parameters: dict, player=None, speak=None) -> str:
     save        = bool(params.get("save", False))
 
     if not origin or not destination:
-        return "Please provide both origin and destination, sir."
+        return "Indica origen y destino, señor."
     if not date_raw:
-        return "Please provide a departure date, sir."
+        return "Indica la fecha de salida, señor."
 
     # Normalise cabin value
     if cabin not in _CABIN_CODE:
@@ -315,7 +315,7 @@ def flight_finder(parameters: dict, player=None, speak=None) -> str:
         player.write_log(f"[FlightFinder] {origin} → {destination} on {date}")
 
     if speak:
-        speak(f"Searching flights from {origin} to {destination} on {date}, sir.")
+        speak(f"Buscando vuelos de {origin} a {destination} el {date}, señor.")
 
     print(
         f"[FlightFinder] ▶️ {origin} → {destination} | {date}"
@@ -329,10 +329,10 @@ def flight_finder(parameters: dict, player=None, speak=None) -> str:
         )
 
         if not raw_text:
-            return "Could not retrieve flight data, sir. The page may not have loaded."
+            return "No pude obtener datos de vuelos, señor. Es posible que la página no haya cargado."
 
         if speak:
-            speak("Analysing the results now, sir.")
+            speak("Analizando los resultados, señor.")
 
         flights = _parse_flights_with_gemini(raw_text, origin, destination, date)
         spoken  = _format_spoken(flights, origin, destination, date)
@@ -345,10 +345,10 @@ def flight_finder(parameters: dict, player=None, speak=None) -> str:
         if save and flights:
             report     = _format_text_report(flights, origin, destination, date, return_date, page_url)
             saved_path = _save_to_desktop(report, origin, destination)
-            result    += f" Results saved to Desktop: {saved_path}"
+            result    += f" Resultados guardados en el Escritorio: {saved_path}"
 
         return result
 
     except Exception as e:
         print(f"[FlightFinder] ❌ {e}")
-        return f"Flight search failed, sir: {e}"
+        return f"Falló la búsqueda de vuelos, señor: {e}"

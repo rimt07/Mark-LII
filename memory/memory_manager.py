@@ -225,12 +225,8 @@ def format_memory_for_prompt(memory: dict | None) -> str:
         if not val:
             continue
         if field == "language":
-            # Labelled as an observation, not a setting. A bare "Language:
-            # English" line written months ago reads like a standing order and
-            # was one of the reasons a Turkish question came back in English.
             core_lines.append(
-                f"Has spoken to you in: {val} (an observation about the past — "
-                f"always answer in the language of their CURRENT message)")
+                f"Idioma del asistente: español (fijo — siempre responde en español)")
         else:
             core_lines.append(f"{field.title()}: {val}")
     for key, entry in identity.items():
@@ -368,14 +364,14 @@ def search_memory(query: str, limit: int = 8) -> str:
                 rows.append((s, cat, key, val))
 
     if not rows:
-        return (f"Nothing stored about '{query}'." if query
-                else "I have not stored anything about this person yet.")
+        return (f"No hay nada guardado sobre '{query}'." if query
+                else "Aún no he guardado nada sobre esta persona.")
 
     rows.sort(key=lambda r: (-r[0], r[2]))
     lines = [f"{cat}/{_pretty(key)}: {val}" for _s, cat, key, val in rows[:max(1, limit)]]
-    head  = (f"Stored facts matching '{query}':" if query
-             else "Everything currently stored:")
-    more  = (f"\n(+{len(rows) - len(lines)} more — search with a narrower keyword)"
+    head  = (f"Datos guardados que coinciden con '{query}':" if query
+             else "Todo lo guardado actualmente:")
+    more  = (f"\n(+{len(rows) - len(lines)} más — busca con una palabra más específica)"
              if len(rows) > len(lines) else "")
     return head + "\n" + "\n".join(lines) + more
 
@@ -406,7 +402,7 @@ def remember(key: str, value: str, category: str = "notes") -> str:
     if category not in valid:
         category = "notes"
     update_memory({category: {key: {"value": value}}})
-    return f"Remembered: {category}/{key} = {value}"
+    return f"Recordado: {category}/{key} = {value}"
 
 
 def forget(key: str, category: str = "notes") -> str:
@@ -416,8 +412,8 @@ def forget(key: str, category: str = "notes") -> str:
         del cat[key]
         memory[category] = cat
         save_memory(memory)
-        return f"Forgotten: {category}/{key}"
-    return f"Not found: {category}/{key}"
+        return f"Olvidado: {category}/{key}"
+    return f"No encontrado: {category}/{key}"
 
 
 forget_memory = forget

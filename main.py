@@ -84,7 +84,7 @@ from actions.dev_agent         import dev_agent
 from actions.web_search        import web_search as web_search_action
 from actions.computer_control  import computer_control
 from actions.game_updater      import game_updater
-from actions.system_monitor    import SystemMonitor, get_system_status
+from actions.system_monitor    import SystemMonitor, get_system_status, format_system_status
 from actions.proactive         import ProactiveEngine
 from actions.background_monitor import (
     add_monitor, remove_monitor, list_monitors, check_all as monitor_check_all,
@@ -159,9 +159,10 @@ def _load_system_prompt() -> str:
         return PROMPT_PATH.read_text(encoding="utf-8")
     except Exception:
         return (
-            "You are JARVIS, Tony Stark's AI assistant. "
-            "Be concise, direct, and always use the provided tools to complete tasks. "
-            "Never simulate or guess results — always call the appropriate tool."
+            "Eres JARVIS, el asistente de Tony Stark. "
+            "Sé conciso, directo y usa siempre las herramientas disponibles. "
+            "Responde siempre en español. "
+            "Nunca simules resultados — llama a la herramienta correspondiente."
         )
 
 _CTRL_RE = re.compile(r"<ctrl\d+>", re.IGNORECASE)
@@ -1046,12 +1047,8 @@ class JarvisLive:
         # Identity injection — overrides any hardcoded name in prompt.txt
         _addr = (f"ADDRESS: Always call the user '{_user_name}'."
                  if _user_name
-                 else "ADDRESS: Address the user with the ordinary respectful form "
-                      "for a superior in the language you are currently speaking — "
-                      "\"sir\" in English, its everyday equivalent in any other "
-                      "language. Never an archaic or aristocratic form, and never "
-                      "the form from a different language than the one you are "
-                      "speaking in this sentence.")
+                 else "ADDRESS: Trata al usuario con respeto en español "
+                      "(usted o señor según el tono). Nunca uses sir ni formas en inglés.")
         identity_ctx = (
             f"[IDENTITY]\n"
             f"Your name is {self._asst_name}. "
@@ -1124,7 +1121,7 @@ class JarvisLive:
             )
 
         loop   = asyncio.get_event_loop()
-        result = "Done."
+        result = "Hecho."
 
         try:
             if name == "recall_memory":
@@ -1137,39 +1134,39 @@ class JarvisLive:
             elif name == "undo":
                 if str(args.get("action", "")).lower().strip() == "list":
                     items = undo_stack.history()
-                    result = ("Things I can undo, most recent first:\n"
+                    result = ("Cosas que puedo deshacer, la más reciente primero:\n"
                               + "\n".join(f"{i+1}. {t}" for i, t in enumerate(items))
-                              ) if items else "I have not changed anything I can undo yet."
+                              ) if items else "No he cambiado nada que pueda deshacer todavía."
                 else:
                     result = await loop.run_in_executor(None, undo_stack.undo_last)
 
             elif name == "open_app":
                 r = await loop.run_in_executor(None, lambda: open_app(parameters=args, response=None, player=self.ui))
-                result = r or f"Opened {args.get('app_name')}."
+                result = r or f"Abrí {args.get('app_name')}."
 
             elif name == "weather_report":
                 r = await loop.run_in_executor(None, lambda: weather_action(parameters=args, player=self.ui))
-                result = r or "Weather delivered."
+                result = r or "Informe del tiempo entregado."
 
             elif name == "browser_control":
                 r = await loop.run_in_executor(None, lambda: browser_control(parameters=args, player=self.ui))
-                result = r or "Done."
+                result = r or "Hecho."
 
             elif name == "file_controller":
                 r = await loop.run_in_executor(None, lambda: file_controller(parameters=args, player=self.ui))
-                result = r or "Done."
+                result = r or "Hecho."
 
             elif name == "send_message":
                 r = await loop.run_in_executor(None, lambda: send_message(parameters=args, response=None, player=self.ui, session_memory=None))
-                result = r or f"Message sent to {args.get('receiver')}."
+                result = r or f"Mensaje enviado a {args.get('receiver')}."
 
             elif name == "reminder":
                 r = await loop.run_in_executor(None, lambda: reminder(parameters=args, response=None, player=self.ui))
-                result = r or "Reminder set."
+                result = r or "Recordatorio programado."
 
             elif name == "youtube_video":
                 r = await loop.run_in_executor(None, lambda: youtube_video(parameters=args, response=None, player=self.ui))
-                result = r or "Done."
+                result = r or "Hecho."
 
             elif name == "screen_process":
                 import time as _t_mod
@@ -1178,7 +1175,7 @@ class JarvisLive:
                 if self._vision_busy or (_now - self._vision_last_time) < _cooldown:
                     _wait = max(0, _cooldown - (_now - self._vision_last_time))
                     print(f"[Vision] ⏳ Cooldown active ({_wait:.1f}s remaining) — ignoring duplicate call")
-                    result = "Vision is still processing the previous request. I will not call this again."
+                    result = "La visión sigue procesando la solicitud anterior. No volveré a llamarla."
                 else:
                     self._vision_busy      = True
                     self._vision_last_time = _now
@@ -1202,44 +1199,44 @@ class JarvisLive:
                                 img_b, user_text, mime=mime_t, speak_result=False
                             )
                         except Exception as e:
-                            result = f"Vision analysis failed: {e}"
+                            result = f"Falló el análisis de visión: {e}"
                         finally:
                             self._vision_busy = False
                     else:
                         self._pending_vision = (img_b, mime_t, user_text, angle)
                         result = (
-                            f"[VISION_ACTIVE] {_stall.capitalize()} captured. "
-                            f"Immediately say ONE short natural sentence in the user's own language, "
-                            f"telling them you are looking at their {_stall} right now. "
-                            f"Do NOT describe or guess content — the actual image arrives in the NEXT message."
+                            f"[VISION_ACTIVE] {_stall.capitalize()} capturada. "
+                            f"Di INMEDIATAMENTE UNA frase corta en español avisando que estás "
+                            f"mirando su {_stall} ahora mismo. "
+                            f"No describas ni adivines el contenido — la imagen real llega en el SIGUIENTE mensaje."
                         )
 
             elif name == "close_camera":
                 self.ui.stop_camera_stream()
-                result = "Camera closed."
+                result = "Cámara cerrada."
 
             elif name == "computer_settings":
                 r = await loop.run_in_executor(None, lambda: computer_settings(parameters=args, response=None, player=self.ui))
-                result = r or "Done."
+                result = r or "Hecho."
 
             elif name == "desktop_control":
                 r = await loop.run_in_executor(None, lambda: desktop_control(parameters=args, player=self.ui))
-                result = r or "Done."
+                result = r or "Hecho."
 
             elif name == "code_helper":
                 r = await loop.run_in_executor(None, lambda: code_helper(parameters=args, player=self.ui, speak=self.speak))
-                result = r or "Done."
+                result = r or "Hecho."
 
             elif name == "dev_agent":
                 r = await loop.run_in_executor(None, lambda: dev_agent(parameters=args, player=self.ui, speak=self.speak))
-                result = r or "Done."
+                result = r or "Hecho."
 
             elif name == "web_search":
                 r = await loop.run_in_executor(None, lambda: web_search_action(parameters=args, player=self.ui))
-                result = r or "Done."
+                result = r or "Hecho."
                 # Mirror results to the on-screen content panel
                 _mode = args.get("mode", "search")
-                if r and not r.startswith("No results") and not r.startswith("Search failed"):
+                if r and not r.startswith("No se encontraron") and not r.startswith("Error en la búsqueda"):
                     _query = args.get("query") or ", ".join(args.get("items", []))
                     _label = f"{_mode.upper()} — {_query[:38]}" if _query else _mode.upper()
                     self.ui.show_content(_label, r)
@@ -1250,23 +1247,23 @@ class JarvisLive:
                     None,
                     lambda: file_processor(parameters=args, player=self.ui, speak=self.speak)
                 )
-                result = r or "Done."
+                result = r or "Hecho."
 
             elif name == "computer_control":
                 r = await loop.run_in_executor(None, lambda: computer_control(parameters=args, player=self.ui))
-                result = r or "Done."
+                result = r or "Hecho."
 
             elif name == "game_updater":
                 r = await loop.run_in_executor(None, lambda: game_updater(parameters=args, player=self.ui, speak=self.speak))
-                result = r or "Done."
+                result = r or "Hecho."
 
             elif name == "flight_finder":
                 r = await loop.run_in_executor(None, lambda: flight_finder(parameters=args, player=self.ui))
-                result = r or "Done."
+                result = r or "Hecho."
 
             elif name == "system_status":
                 r = await loop.run_in_executor(None, get_system_status)
-                result = str(r)
+                result = format_system_status(r)
 
             elif name == "manage_monitor":
                 action = args.get("action", "").lower().strip()
@@ -1277,9 +1274,9 @@ class JarvisLive:
                     result = await asyncio.to_thread(remove_monitor, topic)
                 elif action == "list":
                     topics = await asyncio.to_thread(list_monitors)
-                    result = ("Monitoring: " + ", ".join(topics)) if topics else "No topics are being monitored."
+                    result = ("Vigilando: " + ", ".join(topics)) if topics else "No hay temas en vigilancia."
                 else:
-                    result = "Specify action (add/remove/list) and a topic."
+                    result = "Indica acción (add/remove/list) y un tema."
 
             elif name == "shutdown_jarvis":
                 self.ui.write_log("SYS: Shutdown requested.")
@@ -1287,13 +1284,13 @@ class JarvisLive:
                     await self._save_session_summary()
                     if self._backend_type == "ollama" and self._ollama_backend:
                         try:
-                            await self._ollama_backend.speak("Goodbye.")
+                            await self._ollama_backend.speak("Hasta luego.")
                         except Exception:
                             pass
                     elif self.session:
                         try:
                             await self.session.send_client_content(
-                                turns={"parts": [{"text": "Say a brief natural goodbye to the user."}]},
+                                turns={"parts": [{"text": "Despídete brevemente del usuario en español."}]},
                                 turn_complete=True,
                             )
                         except Exception:
@@ -1322,19 +1319,19 @@ class JarvisLive:
                             timeout=30.0,
                         )
                     except asyncio.TimeoutError:
-                        r = f"Sir, the {name} tool timed out."
-                    result = r or "Done."
+                        r = f"Señor, la herramienta {name} agotó el tiempo de espera."
+                    result = r or "Hecho."
                 elif self._plugin_registry.has(name):
                     r = await loop.run_in_executor(
                         None,
                         lambda: self._plugin_registry.run(name, args, player=self.ui, session_memory=None)
                     )
-                    result = r or "Done."
+                    result = r or "Hecho."
                 else:
-                    result = f"Unknown tool: {name}"
+                    result = f"Herramienta desconocida: {name}"
 
         except Exception as e:
-            result = f"Tool '{name}' failed: {e}"
+            result = f"La herramienta '{name}' falló: {e}"
             traceback.print_exc()
             self.speak_error(name, e)
 
@@ -1643,16 +1640,19 @@ class JarvisLive:
 
             name = _val("name")
             time_str = datetime.now().strftime("%H:%M")
-            greet = f"Good day{', ' + name if name else ''}. It is {time_str}. Fetching today's headlines."
+            greet = (
+                f"Buenos días{', ' + name if name else ''}. "
+                f"Son las {time_str}. Voy a buscar las noticias del día."
+            )
             await self._ollama_backend.speak(greet)
 
             loop = asyncio.get_event_loop()
-            news = await loop.run_in_executor(None, _fetch_news_sync, "top world news today")
+            news = await loop.run_in_executor(None, _fetch_news_sync, "noticias mundiales hoy")
             if news and isinstance(news, str) and news.strip():
                 digest = news.strip()
                 if len(digest) > 600:
                     digest = digest[:600].rsplit(" ", 1)[0] + "…"
-                await self._ollama_backend.speak(f"Here are today's top headlines. {digest}")
+                await self._ollama_backend.speak(f"Estas son las principales noticias de hoy. {digest}")
             self.ui.write_log("SYS: Ollama briefing complete.")
         except Exception as e:
             print(f"[Briefing/Ollama] {e}")
@@ -1673,26 +1673,20 @@ class JarvisLive:
             e = identity.get(k, {})
             return (e.get("value", "") if isinstance(e, dict) else str(e)).strip()
 
-        lang = _val("language")
         name = _val("name")
         time_str = datetime.now().strftime("%H:%M")
 
         # Start fetching news immediately — runs in parallel while phase 1 plays
         loop = asyncio.get_event_loop()
-        news_future = loop.run_in_executor(None, _fetch_news_sync, "top world news today")
+        news_future = loop.run_in_executor(None, _fetch_news_sync, "noticias mundiales hoy")
 
         await asyncio.sleep(0.3)
         if not self.session:
             return
 
         # ── Phase 1: instant greeting ─────────────────────────────────────────
-        # The briefing fires before the user has said anything, so the
-        # remembered language is the only signal there is. It is a starting
-        # point, not a setting: the moment they reply, their language wins.
-        lang_clause = (f" Speak this greeting in {lang}, then follow the "
-                       f"user's own language from their first reply onward."
-                       if lang else "")
-        name_clause = f" Address the user as {name}." if name else ""
+        lang_clause = " Habla siempre en español."
+        name_clause = f" Dirígete al usuario como {name}." if name else ""
 
         # Inject last session context if available — pop removes it so it's never repeated
         last = await asyncio.to_thread(pop_last_session)
@@ -1708,8 +1702,8 @@ class JarvisLive:
             )
 
         p1 = (
-            f"Greet the user warmly, mention it is {time_str}, and say you are fetching today's news now.{session_clause} "
-            f"Keep it to 2 short sentences max. Do not call any tools.{lang_clause}{name_clause}"
+            f"Saluda al usuario con calidez, menciona que son las {time_str} y di que vas a buscar las noticias del día.{session_clause} "
+            f"Máximo 2 frases cortas. No llames herramientas.{lang_clause}{name_clause}"
         )
 
         # Clear the turn-done event so we can wait for Phase 1 to finish
@@ -1725,9 +1719,7 @@ class JarvisLive:
         # ── Phase 2: fire as soon as Phase 1 audio is done ───────────────────
         async def _deliver_news():
             try:
-                lang_str = (f" Speak in {lang} unless the user has since "
-                            f"spoken another language, in which case use theirs."
-                            if lang else "")
+                lang_str = " Habla siempre en español."
 
                 # Wait for news fetch (already running) and Phase 1 turn-complete
                 # in parallel — whichever takes longer determines the wait time
@@ -1759,24 +1751,24 @@ class JarvisLive:
                     return
 
                 failed = (not news_text) or news_text.startswith(
-                    ("No news found", "Search failed", "Please provide")
+                    ("No se encontraron noticias", "Error en la búsqueda", "Indica qué")
                 )
                 if not failed:
                     # Show on UI content panel immediately
-                    self.ui.show_content("NEWS — top world news today", news_text)
+                    self.ui.show_content("NOTICIAS — noticias mundiales hoy", news_text)
 
                     p2 = (
-                        f"[BRIEFING] Here are today's top news headlines:\n{news_text}\n\n"
-                        "Pick ONE headline, summarise it in one sentence, then say the full list "
-                        f"is displayed on screen. Do not call any tools.{lang_str}"
+                        f"[BRIEFING] Estas son las principales noticias de hoy:\n{news_text}\n\n"
+                        "Elige UNA noticia, resúmela en una frase y di que la lista completa "
+                        f"está en pantalla. No llames herramientas.{lang_str}"
                     )
                 else:
                     self.ui.write_log(
                         f"SYS: News unavailable — backend returned: {news_text[:120]!r}"
                     )
                     p2 = (
-                        "News headlines could not be fetched right now. "
-                        f"Let the user know briefly.{lang_str}"
+                        "No se pudieron obtener noticias en este momento. "
+                        f"Avísalo al usuario brevemente.{lang_str}"
                     )
 
                 await self.session.send_client_content(
@@ -2122,12 +2114,8 @@ class JarvisLive:
             _addr = (
                 f"ADDRESS: Always call the user '{_user_name}'."
                 if _user_name
-                else "ADDRESS: Address the user with the ordinary respectful form "
-                     "for a superior in the language you are currently speaking — "
-                     "\"sir\" in English, its everyday equivalent in any other "
-                     "language. Never an archaic or aristocratic form, and never "
-                     "the form from a different language than the one you are "
-                     "speaking in this sentence."
+                else "ADDRESS: Trata al usuario con respeto en español "
+                     "(usted o señor según el tono). Nunca uses sir ni formas en inglés."
             )
             identity_ctx = (
                 f"[IDENTITY]\n"

@@ -103,15 +103,15 @@ def undo_last() -> str:
         entry = _stack.pop() if _stack else None
 
     if entry is None:
-        return ("There is nothing to undo. I only track things I changed myself — "
-                "files I moved or wrote, and settings I adjusted.")
+        return ("No hay nada que deshacer. Solo registro cambios que hice yo — "
+                "archivos que moví o escribí, y ajustes de configuración.")
 
     try:
         detail = entry.undo() or ""
     except Exception as e:
-        return f"Could not undo '{entry.label}': {e}"
+        return f"No pude deshacer '{entry.label}': {e}"
 
-    return f"Undone: {entry.label}." + (f" {detail}" if detail else "")
+    return f"Deshecho: {entry.label}." + (f" {detail}" if detail else "")
 
 
 def clear() -> None:

@@ -395,7 +395,7 @@ def _open_native(url: str, browser_name: Optional[str]) -> str:
                 cmd = ["open", "-a", app] + ([url] if url else [])
                 try:
                     subprocess.run(cmd, check=True, timeout=10)
-                    return f"Opened in {name}: {url}" if url else f"Opened {name}."
+                    return f"Abierto en {name}: {url}" if url else f"Abierto {name}."
                 except Exception as e:
                     print(f"[Browser] 'open -a {app}' failed ({e}), trying binary…")
 
@@ -412,13 +412,13 @@ def _open_native(url: str, browser_name: Optional[str]) -> str:
                     [exe, url] if url else [exe],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 )
-                return f"Opened in {name}: {url}" if url else f"Opened {name}."
+                return f"Abierto en {name}: {url}" if url else f"Abierto {name}."
             except Exception as e:
                 print(f"[Browser] Native launch failed for {name}: {e}")
         print(f"[Browser] '{name}' not found — falling back to default browser.")
 
     if not url:
-        return "Could not find a browser to open."
+        return "No se encontró un navegador para abrir."
 
     # Default browser via the OS — exactly like the user clicking a link.
     try:
@@ -431,14 +431,14 @@ def _open_native(url: str, browser_name: Optional[str]) -> str:
                 ["xdg-open", url],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
-        return f"Opened in your default browser: {url}"
+        return f"Abierto en tu navegador predeterminado: {url}"
     except Exception:
         try:
             if webbrowser.open(url):
-                return f"Opened in your default browser: {url}"
+                return f"Abierto en tu navegador predeterminado: {url}"
         except Exception:
             pass
-        return f"Could not open a browser for: {url}"
+        return f"No se pudo abrir un navegador para: {url}"
 
 
 class _BrowserSession:
@@ -482,7 +482,7 @@ class _BrowserSession:
 
     def run(self, coro, timeout: int = 60) -> str:
         if not self._loop:
-            raise RuntimeError(f"Session for '{self.browser_name}' not started.")
+            raise RuntimeError(f"La sesión de '{self.browser_name}' no se ha iniciado.")
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
         return future.result(timeout=timeout)
 
@@ -523,7 +523,7 @@ class _BrowserSession:
 
         if self._spec is None:
             raise RuntimeError(
-                f"'{self.browser_name}' bu platformda ({_OS}) desteklenmiyor."
+                f"'{self.browser_name}' no es compatible en esta plataforma ({_OS})."
             )
 
         engine_name = self._spec["engine"]
@@ -621,7 +621,7 @@ class _BrowserSession:
             print(f"[Browser] ✅ Launched [{label}] with JARVIS profile "
                   f"(sign-ins persist across sessions)")
         except Exception as e2:
-            raise RuntimeError(f"Could not launch {self.browser_name}: {e2}") from e2
+            raise RuntimeError(f"No se pudo iniciar {self.browser_name}: {e2}") from e2
 
 
     async def _get_page(self) -> Page:
@@ -661,8 +661,8 @@ class _BrowserSession:
                 print(f"[Browser] New-tab retry failed: {e}")
 
         if result_url and result_url not in ("about:blank", "", None):
-            return f"Opened: {result_url}"
-        return f"Could not open: {url}"
+            return f"Abierto: {result_url}"
+        return f"No se pudo abrir: {url}"
 
     async def search(self, query: str, engine: str = "google") -> str:
         base = _SEARCH_ENGINES.get(engine.lower(), _SEARCH_ENGINES["google"])
@@ -673,15 +673,15 @@ class _BrowserSession:
         try:
             if text:
                 await page.get_by_text(text, exact=False).first.click(timeout=8_000)
-                return f"Clicked text: '{text}'"
+                return f"Se hizo clic en el texto: '{text}'"
             if selector:
                 await page.click(selector, timeout=8_000)
-                return f"Clicked selector: {selector}"
-            return "No selector or text provided."
+                return f"Se hizo clic en el selector: {selector}"
+            return "No se proporcionó selector ni texto."
         except PlaywrightTimeout:
-            return "Element not found (timeout)."
+            return "Elemento no encontrado (tiempo de espera agotado)."
         except Exception as e:
-            return f"Click error: {e}"
+            return f"Error al hacer clic: {e}"
 
     async def type_text(self, selector: str = None, text: str = "",
                         clear_first: bool = True) -> str:
@@ -691,26 +691,26 @@ class _BrowserSession:
             if clear_first:
                 await el.clear()
             await el.type(text, delay=50)
-            return "Text typed."
+            return "Texto escrito."
         except Exception as e:
-            return f"Type error: {e}"
+            return f"Error al escribir: {e}"
 
     async def scroll(self, direction: str = "down", amount: int = 500) -> str:
         page = await self._get_page()
         try:
             y = amount if direction == "down" else -amount
             await page.mouse.wheel(0, y)
-            return f"Scrolled {direction}."
+            return f"Desplazado hacia {direction}."
         except Exception as e:
-            return f"Scroll error: {e}"
+            return f"Error al desplazar: {e}"
 
     async def press(self, key: str) -> str:
         page = await self._get_page()
         try:
             await page.keyboard.press(key)
-            return f"Pressed: {key}"
+            return f"Tecla pulsada: {key}"
         except Exception as e:
-            return f"Key error: {e}"
+            return f"Error de tecla: {e}"
 
     async def get_text(self) -> str:
         page = await self._get_page()
@@ -718,7 +718,7 @@ class _BrowserSession:
             text = await page.inner_text("body")
             return text[:4_000]
         except Exception as e:
-            return f"Could not get page text: {e}"
+            return f"No se pudo obtener el texto de la página: {e}"
 
     async def get_url(self) -> str:
         page = await self._get_page()
@@ -735,7 +735,7 @@ class _BrowserSession:
                 results.append(f"✓ {selector}")
             except Exception as e:
                 results.append(f"✗ {selector}: {e}")
-        return "Form filled: " + ", ".join(results)
+        return "Formulario completado: " + ", ".join(results)
 
     async def smart_click(self, description: str) -> str:
         page = await self._get_page()
@@ -744,7 +744,7 @@ class _BrowserSession:
                 loc = page.get_by_role(role, name=description)
                 if await loc.count() > 0:
                     await loc.first.click(timeout=5_000)
-                    return f"Clicked ({role}): '{description}'"
+                    return f"Clic en ({role}): '{description}'"
             except Exception:
                 pass
         for attempt in (
@@ -757,10 +757,10 @@ class _BrowserSession:
         ):
             try:
                 await attempt()
-                return f"Clicked: '{description}'"
+                return f"Clic en: '{description}'"
             except Exception:
                 pass
-        return f"Could not find element: '{description}'"
+        return f"No se encontró el elemento: '{description}'"
 
     async def smart_type(self, description: str, text: str) -> str:
         page = await self._get_page()
@@ -778,10 +778,10 @@ class _BrowserSession:
                     continue
                 await el.clear()
                 await el.type(text, delay=50)
-                return f"Typed into ({method}): '{description}'"
+                return f"Texto escrito en ({method}): '{description}'"
             except Exception:
                 continue
-        return f"Could not find input: '{description}'"
+        return f"No se encontró el campo de entrada: '{description}'"
 
     async def new_tab(self, url: str = "") -> str:
         page = await self._get_page()
@@ -790,7 +790,7 @@ class _BrowserSession:
         self._page = new
         if url:
             return await self.go_to(url)
-        return "New tab opened."
+        return "Nueva pestaña abierta."
 
     async def close_tab(self) -> str:
         page = self._page
@@ -799,45 +799,45 @@ class _BrowserSession:
             await page.close()
             pages = ctx.pages
             self._page = pages[-1] if pages else None
-            return "Tab closed."
-        return "No active tab to close."
+            return "Pestaña cerrada."
+        return "No hay pestaña activa para cerrar."
 
     async def screenshot(self, path: str = None) -> str:
         page = await self._get_page()
         try:
             save_path = path or str(Path.home() / "Desktop" / "jarvis_screenshot.png")
             await page.screenshot(path=save_path, full_page=False)
-            return f"Screenshot saved: {save_path}"
+            return f"Captura de pantalla guardada: {save_path}"
         except Exception as e:
-            return f"Screenshot error: {e}"
+            return f"Error en la captura de pantalla: {e}"
 
     async def back(self) -> str:
         page = await self._get_page()
         try:
             await page.go_back(timeout=10_000)
-            return f"Navigated back: {page.url}"
+            return f"Navegación hacia atrás: {page.url}"
         except Exception as e:
-            return f"Back error: {e}"
+            return f"Error al retroceder: {e}"
 
     async def forward(self) -> str:
         page = await self._get_page()
         try:
             await page.go_forward(timeout=10_000)
-            return f"Navigated forward: {page.url}"
+            return f"Navegación hacia adelante: {page.url}"
         except Exception as e:
-            return f"Forward error: {e}"
+            return f"Error al avanzar: {e}"
 
     async def reload(self) -> str:
         page = await self._get_page()
         try:
             await page.reload(timeout=15_000)
-            return f"Page reloaded: {page.url}"
+            return f"Página recargada: {page.url}"
         except Exception as e:
-            return f"Reload error: {e}"
+            return f"Error al recargar: {e}"
 
     async def close_browser(self) -> str:
         await self._async_close()
-        return f"{self.browser_name} closed."
+        return f"{self.browser_name} cerrado."
 
 class _SessionRegistry:
     """Tüm aktif tarayıcı oturumlarını yönetir."""
@@ -885,7 +885,7 @@ class _SessionRegistry:
         browser_name = _ALIASES.get(browser_name.lower().strip(), browser_name.lower().strip())
         self._get_or_create(browser_name)
         self._active_browser = browser_name
-        return f"Active browser → {browser_name}"
+        return f"Navegador activo → {browser_name}"
 
     def close_one(self, browser_name: str) -> str:
         with self._lock:
@@ -894,8 +894,8 @@ class _SessionRegistry:
             sess.close()
             if self._active_browser == browser_name:
                 self._active_browser = ""
-            return f"{browser_name} closed."
-        return f"No active session for: {browser_name}"
+            return f"{browser_name} cerrado."
+        return f"No hay sesión activa para: {browser_name}"
 
     def close_all(self) -> str:
         with self._lock:
@@ -908,17 +908,17 @@ class _SessionRegistry:
                 s.close()
             except Exception:
                 pass
-        return "All browsers closed: " + (", ".join(names) if names else "none")
+        return "Todos los navegadores cerrados: " + (", ".join(names) if names else "ninguno")
 
     def list_sessions(self) -> str:
         with self._lock:
             if not self._sessions:
-                return "No active browser sessions."
+                return "No hay sesiones de navegador activas."
             lines = []
             for name in self._sessions:
-                marker = " ◀ active" if name == self._active_browser else ""
+                marker = " ◀ activo" if name == self._active_browser else ""
                 lines.append(f"  • {name}{marker}")
-            return "Open browsers:\n" + "\n".join(lines)
+            return "Navegadores abiertos:\n" + "\n".join(lines)
 
 
 _registry = _SessionRegistry()
@@ -932,11 +932,11 @@ def browser_control(
     params  = parameters or {}
     action  = params.get("action", "").lower().strip()
     browser = params.get("browser", "").lower().strip() or None
-    result  = "Unknown action."
+    result  = "Acción desconocida."
 
     if action == "switch":
         target = browser or params.get("target", "").lower().strip()
-        result = _registry.switch(target) if target else "Please specify a browser."
+        result = _registry.switch(target) if target else "Por favor, especifica un navegador."
         _log(player, result)
         return result
 
@@ -952,7 +952,7 @@ def browser_control(
 
     if action == "close":
         target = browser or _registry._active_browser
-        result = _registry.close_one(target) if target else "No browser specified."
+        result = _registry.close_one(target) if target else "No se especificó ningún navegador."
         _log(player, result)
         return result
 
@@ -974,9 +974,9 @@ def browser_control(
                 else:
                     result = sess.run(sess.go_to(params.get("url", "")))
             except concurrent.futures.TimeoutError:
-                result = f"Browser action '{action}' timed out (60s)."
+                result = f"La acción del navegador '{action}' agotó el tiempo de espera (60 s)."
             except Exception as e:
-                result = f"Browser error ({action}): {e}"
+                result = f"Error del navegador ({action}): {e}"
             _log(player, result)
             return result
 
@@ -988,7 +988,7 @@ def browser_control(
             nav_url = params.get("url", "").strip()
 
         result = _open_native(nav_url, browser)
-        if result.startswith("Opened") and nav_url:
+        if result.startswith("Abierto") and nav_url:
             _registry.note_native_url(_normalize_url(nav_url))
         _log(player, result)
         return result
@@ -1000,7 +1000,7 @@ def browser_control(
     try:
         sess = _registry.get(browser)
     except Exception as e:
-        result = f"Could not start browser session: {e}"
+        result = f"No se pudo iniciar la sesión del navegador: {e}"
         _log(player, result)
         return result
 
@@ -1042,12 +1042,12 @@ def browser_control(
         elif action == "reload":
             result = sess.run(sess.reload())
         else:
-            result = f"Unknown browser action: '{action}'"
+            result = f"Acción de navegador desconocida: '{action}'"
 
     except concurrent.futures.TimeoutError:
-        result = f"Browser action '{action}' timed out (60s)."
+        result = f"La acción del navegador '{action}' agotó el tiempo de espera (60 s)."
     except Exception as e:
-        result = f"Browser error ({action}): {e}"
+        result = f"Error del navegador ({action}): {e}"
 
     _log(player, result)
     return result

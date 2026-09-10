@@ -8,7 +8,47 @@ import os
 import tempfile
 from pathlib import Path
 from typing import Optional, Callable
+
 import soundfile as sf
+
+from core.tts import _compress_silence, _to_numpy
+
+# kokoro-onnx 0.6.x has no get_languages(); map config aliases to espeak codes.
+_KOKORO_LANGS = frozenset({
+    "en-us", "en-gb", "es", "fr-fr", "de-de", "it", "pt-br", "ja", "cmn", "hi",
+})
+_LANG_ALIASES = {
+    "en": "en-us",
+    "en_us": "en-us",
+    "en_gb": "en-gb",
+    "es_mx": "es",
+    "es-mx": "es",
+    "es_es": "es",
+    "es-es": "es",
+    "fr": "fr-fr",
+    "fr_fr": "fr-fr",
+    "de": "de-de",
+    "de_de": "de-de",
+    "pt": "pt-br",
+    "pt_br": "pt-br",
+    "zh": "cmn",
+    "zh-cn": "cmn",
+}
+
+
+def normalize_kokoro_lang(lang: str) -> str:
+    """Map UI/config language codes to kokoro-onnx espeak language ids."""
+    raw = (lang or "en-us").strip().lower().replace("_", "-")
+    if raw in _LANG_ALIASES:
+        return _LANG_ALIASES[raw]
+    if raw in _KOKORO_LANGS:
+        return raw
+    base = raw.split("-", 1)[0]
+    if base in _KOKORO_LANGS:
+        return base
+    if base in _LANG_ALIASES:
+        return _LANG_ALIASES[base]
+    return "en-us"
 
 
 class KokoroTTS:
@@ -86,12 +126,13 @@ class KokoroTTS:
             self.logger(f"[Kokoro] Loading model from {self.model_path}")
             self.kokoro = Kokoro(self.model_path, self.voices_path)
 
-            # Validate language
-            supported_langs = set(self.kokoro.get_languages())
-            if self.lang not in supported_langs:
-                self.logger(f"[Kokoro] WARNING: Language '{self.lang}' not in {supported_langs}")
-                self.logger(f"[Kokoro] Falling back to 'en-us'")
-                self.lang = "en-us"
+            normalized = normalize_kokoro_lang(self.lang)
+            if normalized != (self.lang or "").strip().lower().replace("_", "-"):
+                self.logger(
+                    f"[Kokoro] Language '{self.lang}' -> '{normalized}' "
+                    f"(kokoro-onnx/espeak code)"
+                )
+            self.lang = normalized
 
             # Validate and prepare voice
             self.voice = self._validate_voice(self.voice)
@@ -162,13 +203,9 @@ class KokoroTTS:
 
         return voice
 
-    async def synthesize(self, text: str, output_path: Optional[str] = None) -> Optional[str]:
+    def synthesize_sync(self, text: str, output_path: Optional[str] = None) -> Optional[str]:
         """
-        Synthesize speech from text.
-
-        Args:
-            text: Text to speak
-            output_path: Optional path to save audio file (if None, generates temp file)
+        Synthesize speech from text (blocking — run via asyncio.to_thread).
 
         Returns:
             Path to generated audio file, or None on error
@@ -178,22 +215,19 @@ class KokoroTTS:
             return None
 
         try:
-            # Generate audio samples
             samples, sample_rate = self.kokoro.create(
                 text,
                 voice=self.voice,
                 speed=self.speed,
-                lang=self.lang
+                lang=self.lang,
             )
+            samples = _compress_silence(_to_numpy(samples), sample_rate)
 
-            # Create output file
             if output_path is None:
                 fd, output_path = tempfile.mkstemp(suffix=".wav", prefix="kokoro_")
                 os.close(fd)
 
-            # Save audio
             sf.write(output_path, samples, sample_rate)
-
             return output_path
 
         except Exception as e:
@@ -202,6 +236,11 @@ class KokoroTTS:
             traceback.print_exc()
             return None
 
+    async def synthesize(self, text: str, output_path: Optional[str] = None) -> Optional[str]:
+        """Async wrapper around synthesize_sync for callers that await it."""
+        import asyncio
+        return await asyncio.to_thread(self.synthesize_sync, text, output_path)
+
     def get_voices(self):
         """List all available voices"""
         if not self._initialized:
@@ -209,10 +248,8 @@ class KokoroTTS:
         return sorted(self.kokoro.get_voices())
 
     def get_languages(self):
-        """List all supported languages"""
-        if not self._initialized:
-            return []
-        return sorted(self.kokoro.get_languages())
+        """List supported kokoro-onnx language codes."""
+        return sorted(_KOKORO_LANGS)
 
     def set_voice(self, voice: str):
         """Change voice"""
@@ -228,9 +265,6 @@ class KokoroTTS:
     def set_language(self, lang: str):
         """Change language"""
         if self._initialized:
-            supported_langs = set(self.kokoro.get_languages())
-            if lang in supported_langs:
-                self.lang = lang
-                self.logger(f"[Kokoro] Language changed to: {self.lang}")
-            else:
-                self.logger(f"[Kokoro] Unsupported language: {lang}")
+            normalized = normalize_kokoro_lang(lang)
+            self.lang = normalized
+            self.logger(f"[Kokoro] Language changed to: {self.lang}")
